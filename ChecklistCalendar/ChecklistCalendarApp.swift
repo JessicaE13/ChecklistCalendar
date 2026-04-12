@@ -1,0 +1,17 @@
+//
+//  ChecklistCalendarApp.swift
+//  ChecklistCalendar
+//
+//  Created by Jessica Estes on 4/11/26.
+//
+
+import SwiftUI
+
+@main
+struct ChecklistCalendarApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
