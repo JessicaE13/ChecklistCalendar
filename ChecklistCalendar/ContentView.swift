@@ -56,7 +56,21 @@ struct DateHeader: View {
     }()
 
     var body: some View {
-        TabView(selection: $currentWeekOffset) {
+        TabView(selection: Binding(
+            get: { currentWeekOffset },
+            set: { newOffset in
+                let oldWeekday = calendar.component(.weekday, from: selectedDate)
+                let days = weekDays(for: newOffset)
+                if let matchingDay = days.first(where: {
+                    calendar.component(.weekday, from: $0) == oldWeekday
+                }) {
+                    let impact = UIImpactFeedbackGenerator(style: .light)
+                    impact.impactOccurred()
+                    selectedDate = matchingDay
+                }
+                currentWeekOffset = newOffset
+            }
+        )) {
             ForEach(-52...52, id: \.self) { offset in
                 WeekRow(
                     days: weekDays(for: offset),
