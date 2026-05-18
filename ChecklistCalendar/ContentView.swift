@@ -83,7 +83,7 @@ struct DateHeader: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 52)
+        .frame(height: 56)
     }
 }
 
@@ -109,22 +109,22 @@ struct WeekRow: View {
                 }) {
                     VStack(spacing: 4) {
                         Text(dayFormatter.string(from: date))
-                            .font(.caption)
+                            .font(.caption2)
                             .foregroundColor(.primary)
 
                         ZStack {
                             if isTodaySelected {
                                 Circle()
                                     .fill(Color.red)
-                                    .frame(width: 30, height: 30)
+                                    .frame(width: 36, height: 36)
                             } else if isSelectedNotToday {
                                 Circle()
                                     .fill(Color.black)
-                                    .frame(width: 30, height: 30)
+                                    .frame(width: 36, height: 36)
                             }
 
                             Text("\(calendar.component(.day, from: date))")
-                                .font(.body)
+                                .font(.title2)
                                 .fontWeight(isSelected ? .semibold : .regular)
                                 .foregroundColor(
                                     isSelected
@@ -134,7 +134,7 @@ struct WeekRow: View {
                                             : .primary
                                 )
                         }
-                        .frame(width: 30, height: 30)
+                        .frame(width: 36, height: 36)
                     }
                 }
                 .buttonStyle(.plain)
