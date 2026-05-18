@@ -31,59 +31,82 @@ struct ContentView: View {
 
 
 struct DateHeader: View {
+    @State private var selectedDate: Date = Date()
+    
+    private let calendar = Calendar.current
+    private let today = Calendar.current.startOfDay(for: Date())
+    
+    // Generate the 7 days of the week containing today
+    private var weekDays: [Date] {
+        let startOfToday = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: startOfToday) // 1 = Sun, 7 = Sat
+        let daysFromSunday = weekday - 1
+        
+        guard let sunday = calendar.date(
+            byAdding: .day,
+            value: -daysFromSunday,
+            to: startOfToday
+        ) else { return [] }
+        
+        return (0..<7).compactMap {
+            calendar.date(byAdding: .day, value: $0, to: sunday)
+        }
+    }
+    
+    private let dayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "EEE" // "Sun", "Mon", etc.
+        return f
+    }()
     
     var body: some View {
-        HStack{
-           
-            VStack{
-                Text("Sun")
-                    .font(.caption)
-                Text("11")
-                  
+        HStack(spacing: 0) {
+            ForEach(Array(weekDays.enumerated()), id: \.element) { index, date in
+                let isToday = calendar.isDate(date, inSameDayAs: today)
+                let isSelected = calendar.isDate(date, inSameDayAs: selectedDate)
+                let isTodaySelected = isSelected && isToday
+                let isSelectedNotToday = isSelected && !isToday
+
+                Button(action: {
+                    selectedDate = date
+                }) {
+                    VStack(spacing: 4) {
+                        Text(dayFormatter.string(from: date))
+                            .font(.caption)
+                            .foregroundColor(.primary)
+
+                        ZStack {
+                            if isTodaySelected {
+                                Circle()
+                                    .fill(Color.red)
+                                    .frame(width: 30, height: 30)
+                            } else if isSelectedNotToday {
+                                Circle()
+                                    .fill(Color.black)
+                                    .frame(width: 30, height: 30)
+                            }
+
+                            Text("\(calendar.component(.day, from: date))")
+                                .font(.body)
+                                .fontWeight(isSelected ? .semibold : .regular)
+                                .foregroundColor(
+                                    isSelected
+                                        ? .white
+                                        : isToday
+                                            ? .red
+                                            : .primary
+                                )
+                        }
+                        .frame(width: 30, height: 30)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                // Add a Spacer after every day except the last
+                if index < weekDays.count - 1 {
+                    Spacer(minLength: 0)
+                }
             }
-            Spacer()
-            VStack{
-                Text("Mon")
-                    .font(.caption)
-                Text("12")
-           
-            }
-            Spacer()
-            VStack{
-                Text("Tue")
-                    .font(.caption)
-                Text("13")
-                   
-            }
-            Spacer()
-            VStack{
-                Text("Wed")
-                    .font(.caption)
-                Text("14")
-                
-            }
-            Spacer()
-            VStack{
-                Text("Thu")
-                    .font(.caption)
-                Text("15")
-                
-            }
-            Spacer()
-            VStack{
-                Text("Fri")
-                    .font(.caption)
-                Text("16")
-                
-            }
-            Spacer()
-            VStack{
-                Text("Sat")
-                    .font(.caption)
-                Text("17")
-          
-            }
-         
         }
     }
 }
