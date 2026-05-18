@@ -9,30 +9,31 @@ import SwiftUI
 
 // MARK: - Main View
 struct ContentView: View {
-    
+    @State private var selectedDate: Date = Date()
+
     var body: some View {
         ZStack {
             Color("BackgroundColor").ignoresSafeArea()
-            VStack(){
+            VStack() {
                 TopHeader()
                     .padding(8)
-                DateHeader()
+                DateHeader(selectedDate: $selectedDate)
                     .padding(8)
-                ItemList()
+                ItemList(selectedDate: selectedDate)
                     .padding(.top, 8)
                 Spacer()
             }
             .padding()
         }
-    
     }
 }
 
 
 
 struct DateHeader: View {
-    @State private var selectedDate: Date = Date()
+    @Binding var selectedDate: Date
     @State private var currentWeekOffset: Int = 0
+
 
     private let calendar = Calendar.current
     private let today = Calendar.current.startOfDay(for: Date())
@@ -147,80 +148,79 @@ struct WeekRow: View {
     }
 }
 
+// MARK: - Data Model
+struct ChecklistItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+    let icon: String
+    let date: Date
+    var isComplete: Bool = false
+}
+
+// MARK: - Item List
 struct ItemList: View {
+    let selectedDate: Date
     let corner: CGFloat = 16
     let fontSize: Font = .title2
-    
-    var body: some View {
-        LazyVStack{
-            HStack {
-                Image(systemName: "sunrise")
-                    .font(fontSize)
-                    .padding(.trailing, 8)
-                VStack (alignment: .leading){
-                    
-                    Text("Event")
-                    Text("Location")
-                        .font(.caption2)
-                
-                }
-                Spacer()
-                Image(systemName: "circle")
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(Color("ItemBackgroundColor"))
-            )
-            .padding(.vertical, 0)
-            
-            
-            HStack {
-                Image(systemName: "calendar")
-                    .font(.title)
-                    .padding(.trailing, 8)
-                VStack (alignment: .leading){
-                    
-                    Text("Event")
-                    Text("Location")
-                        .font(.caption2)
-                    
-                }
-                Spacer()
-                Image(systemName: "circle")
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(Color("ItemBackgroundColor"))
-            )
-            .padding(.vertical, 0)
-            
-            HStack {
-                Image(systemName: "checkmark")
-                    .font(.title)
-                    .padding(.trailing, 8)
-                VStack (alignment: .leading){
-                    
-                    Text("Event")
-                    Text("Location")
-                        .font(.caption2)
-                
-                }
-                Spacer()
-                Image(systemName: "circle")
-            }
-            .padding()
-            .background(
-                RoundedRectangle(cornerRadius: corner)
-                    .fill(Color("ItemBackgroundColor"))
-            )
-            .padding(.vertical, 0)
-            
-            
-        }
-        
+    private let calendar = Calendar.current
+
+    // Sample data — replace with your real data source
+    @State private var items: [ChecklistItem] = {
+        let calendar = Calendar.current
+        let today = Date()
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
+
+        return [
+            ChecklistItem(title: "Morning Run", subtitle: "Riverside Park", icon: "sunrise", date: today),
+            ChecklistItem(title: "Team Standup", subtitle: "Zoom", icon: "calendar", date: today),
+            ChecklistItem(title: "Buy Groceries", subtitle: "Publix", icon: "checkmark", date: today),
+            ChecklistItem(title: "Doctor Appointment", subtitle: "Mayo Clinic", icon: "calendar", date: tomorrow),
+            ChecklistItem(title: "Call Mom", subtitle: "Home", icon: "checkmark", date: yesterday),
+        ]
+    }()
+
+    private var filteredItems: [ChecklistItem] {
+        items.filter { calendar.isDate($0.date, inSameDayAs: selectedDate) }
     }
+
+    var body: some View {
+        LazyVStack {
+            if filteredItems.isEmpty {
+                Text("No items for this day")
+                    .foregroundColor(.secondary)
+                    .padding(.top, 32)
+            } else {
+                ForEach(filteredItems) { item in
+                    HStack {
+                        Image(systemName: item.icon)
+                            .font(fontSize)
+                            .padding(.trailing, 8)
+                        VStack(alignment: .leading) {
+                            Text(item.title)
+                            Text(item.subtitle)
+                                .font(.caption2)
+                        }
+                        Spacer()
+                        Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
+                            .foregroundColor(item.isComplete ? .green : .primary)
+                            .onTapGesture {
+                                if let index = items.firstIndex(where: { $0.id == item.id }) {
+                                    items[index].isComplete.toggle()
+                                }
+                            }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: corner)
+                            .fill(Color("ItemBackgroundColor"))
+                    )
+                }
+            }
+        }
+    }
+
 }
 
 #Preview {
