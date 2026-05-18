@@ -7,10 +7,18 @@
 
 import SwiftUI
 
+// MARK: - Checklist Entry
+struct ChecklistEntry: Identifiable {
+    let id = UUID()
+    var text: String
+    var isComplete: Bool = false
+}
+
 // MARK: - Main View
 struct ContentView: View {
     @State private var selectedDate: Date = Date()
     @State private var currentWeekOffset: Int = 0
+    @State private var showAddItem: Bool = false
 
     var body: some View {
         ZStack {
@@ -25,8 +33,137 @@ struct ContentView: View {
                 Spacer()
             }
             .padding()
+
+            // MARK: Floating Add Button
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    Button(action: {
+                        let impact = UIImpactFeedbackGenerator(style: .medium)
+                        impact.impactOccurred()
+                        showAddItem = true
+                    }) {
+                        Image(systemName: "plus")
+                            .font(.title2.weight(.semibold))
+                            .foregroundColor(.white)
+                            .frame(width: 56, height: 56)
+                            .background(Color.accentColor)
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.2), radius: 8, x: 0, y: 4)
+                    }
+                    .padding(.trailing, 24)
+                    .padding(.bottom, 24)
+                }
+            }
+        }
+        .sheet(isPresented: $showAddItem) {
+            AddItemView(defaultDate: selectedDate)
         }
     }
+}
+
+
+// MARK: - Add Item View
+struct AddItemView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let defaultDate: Date
+
+    @State private var title: String = ""
+    @State private var subtitle: String = ""
+    @State private var date: Date
+    @State private var icon: String = "checkmark"
+
+    private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
+
+    init(defaultDate: Date) {
+        self.defaultDate = defaultDate
+        _date = State(initialValue: defaultDate)
+    }
+
+    // Shared item store would normally live in an @EnvironmentObject or similar.
+    // For now this view dismisses and the parent ItemList manages state.
+    // To wire saving, pass a binding or use an @EnvironmentObject.
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Details") {
+                    HStack {
+                        Text("Title")
+                            .foregroundColor(.secondary)
+                        TextField("Title", text: $title)
+                            .multilineTextAlignment(.trailing)
+                    }
+                    HStack {
+                        Text("Location")
+                            .foregroundColor(.secondary)
+                        TextField("Location", text: $subtitle)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                Section("Schedule") {
+                    DatePicker("Date", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                }
+
+                Section("Icon") {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 16) {
+                            ForEach(icons, id: \.self) { iconName in
+                                Button(action: {
+                                    let impact = UIImpactFeedbackGenerator(style: .light)
+                                    impact.impactOccurred()
+                                    icon = iconName
+                                }) {
+                                    Image(systemName: iconName)
+                                        .font(.title2)
+                                        .foregroundColor(icon == iconName ? .white : .primary)
+                                        .frame(width: 44, height: 44)
+                                        .background(
+                                            Circle()
+                                                .fill(icon == iconName ? Color.accentColor : Color(.systemGray5))
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+            .navigationTitle("New Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        // Post a notification so ItemList can insert the new item
+                        let newItem = ChecklistItem(
+                            title: title.isEmpty ? "New Item" : title,
+                            subtitle: subtitle,
+                            icon: icon,
+                            date: date
+                        )
+                        NotificationCenter.default.post(
+                            name: .addChecklistItem,
+                            object: newItem
+                        )
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+extension Notification.Name {
+    static let addChecklistItem = Notification.Name("addChecklistItem")
 }
 
 
@@ -34,8 +171,6 @@ struct ContentView: View {
 struct DateHeader: View {
     @Binding var selectedDate: Date
     @Binding var currentWeekOffset: Int
-    // ... rest unchanged
-
 
     private let calendar = Calendar.current
     private let today = Calendar.current.startOfDay(for: Date())
@@ -107,7 +242,7 @@ struct WeekRow: View {
 
                 Button(action: {
                     let impact = UIImpactFeedbackGenerator(style: .light)
-                       impact.impactOccurred()
+                    impact.impactOccurred()
                     selectedDate = date
                 }) {
                     VStack(spacing: 4) {
@@ -159,6 +294,7 @@ struct ChecklistItem: Identifiable {
     var date: Date
     var isComplete: Bool = false
     var notes: String = ""
+    var checklist: [ChecklistEntry] = []
 }
 
 // MARK: - Item Row
@@ -168,6 +304,12 @@ struct ItemRow: View {
     let fontSize: Font = .title2
     let onTap: () -> Void
     let onToggle: () -> Void
+
+    private var checklistProgress: String? {
+        guard !item.checklist.isEmpty else { return nil }
+        let done = item.checklist.filter(\.isComplete).count
+        return "\(done)/\(item.checklist.count)"
+    }
 
     var body: some View {
         HStack {
@@ -180,6 +322,21 @@ struct ItemRow: View {
                     .font(.caption2)
             }
             Spacer()
+
+            // Checklist progress badge
+            if let progress = checklistProgress {
+                Text(progress)
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        Capsule()
+                            .fill(Color(.systemGray5))
+                    )
+                    .padding(.trailing, 6)
+            }
+
             Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
                 .foregroundColor(item.isComplete ? .green : .primary)
                 .onTapGesture {
@@ -206,7 +363,6 @@ struct ItemListPager: View {
     private let calendar = Calendar.current
     private let dayRange = -365...365
 
-    // Convert selectedDate to a day offset from today
     private var selectedDayOffset: Int {
         let today = calendar.startOfDay(for: Date())
         let selected = calendar.startOfDay(for: selectedDate)
@@ -319,6 +475,11 @@ struct ItemList: View {
                 }
             )
         }
+        .onReceive(NotificationCenter.default.publisher(for: .addChecklistItem)) { notification in
+            if let newItem = notification.object as? ChecklistItem {
+                items.append(newItem)
+            }
+        }
     }
 }
 
@@ -327,8 +488,11 @@ struct ItemDetailView: View {
     @Binding var item: ChecklistItem
     var onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.editMode) private var editMode
 
     @State private var showDeleteConfirmation = false
+    @State private var newEntryText: String = ""
+    @FocusState private var newEntryFocused: Bool
 
     private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
 
@@ -384,6 +548,51 @@ struct ItemDetailView: View {
                     }
                 }
 
+                // MARK: Checklist
+                Section {
+                    ForEach($item.checklist) { $entry in
+                        HStack {
+                            Image(systemName: entry.isComplete ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(entry.isComplete ? .green : .secondary)
+                            TextField("Item", text: $entry.text)
+                                .strikethrough(entry.isComplete, color: .secondary)
+                                .foregroundColor(entry.isComplete ? .secondary : .primary)
+                                .disabled(editMode?.wrappedValue != .active)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            if editMode?.wrappedValue != .active {
+                                let impact = UIImpactFeedbackGenerator(style: .light)
+                                impact.impactOccurred()
+                                entry.isComplete.toggle()
+                            }
+                        }
+                    }
+                    .onDelete { indexSet in
+                        item.checklist.remove(atOffsets: indexSet)
+                    }
+                    .onMove { from, to in
+                        item.checklist.move(fromOffsets: from, toOffset: to)
+                    }
+
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .foregroundColor(.accentColor)
+                        TextField("Add item...", text: $newEntryText)
+                            .focused($newEntryFocused)
+                            .onSubmit {
+                                commitNewEntry()
+                            }
+                    }
+                } header: {
+                    HStack {
+                        Text("Checklist")
+                        Spacer()
+                        EditButton()
+                            .font(.caption)
+                    }
+                }
+
                 // MARK: Notes
                 Section("Notes") {
                     TextEditor(text: $item.notes)
@@ -404,11 +613,14 @@ struct ItemDetailView: View {
                     }
                 }
             }
-            .navigationTitle("Edit Item")
+            .navigationTitle("Item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        commitNewEntry()
+                        dismiss()
+                    }
                 }
             }
             .confirmationDialog(
@@ -422,6 +634,13 @@ struct ItemDetailView: View {
                 Button("Cancel", role: .cancel) { }
             }
         }
+    }
+
+    private func commitNewEntry() {
+        let trimmed = newEntryText.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        item.checklist.append(ChecklistEntry(text: trimmed))
+        newEntryText = ""
     }
 }
 
