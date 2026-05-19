@@ -50,7 +50,6 @@ struct ContentView: View {
                             .frame(width: 56, height: 56)
                             .background(Color.primary)
                             .clipShape(Circle())
-                         
                     }
                     .padding(.trailing, 24)
                     .padding(.bottom, 24)
@@ -64,6 +63,56 @@ struct ContentView: View {
 }
 
 
+// MARK: - Schedule Mode
+enum ScheduleMode: String, CaseIterable {
+    // Time of day (fuzzy)
+    case anytime = "Anytime"
+    case morning = "Morning"
+    case afternoon = "Afternoon"
+    case evening = "Evening"
+    // Event (precise)
+    case atTime = "At time"
+    case allDay = "All day"
+    // Task
+    case todo = "To-do"
+
+    var icon: String {
+        switch self {
+        case .anytime:   return "clock"
+        case .morning:   return "sunrise"
+        case .afternoon: return "sun.max"
+        case .evening:   return "moon.stars"
+        case .atTime:    return "calendar.badge.clock"
+        case .allDay:    return "clock"
+        case .todo:      return "tray"
+        }
+    }
+
+    /// Whether this mode uses fuzzy time-of-day rather than a specific time
+    var isFuzzy: Bool {
+        switch self {
+        case .morning, .afternoon, .evening, .anytime, .allDay, .todo: return true
+        case .atTime: return false
+        }
+    }
+
+    /// Whether this mode needs a date picker at all
+    var needsDate: Bool {
+        switch self {
+        case .todo: return false
+        default: return true
+        }
+    }
+}
+
+enum RepeatOption: String, CaseIterable {
+    case noRepeat = "No repeat"
+    case daily    = "Daily"
+    case weekly   = "Weekly"
+    case monthly  = "Monthly"
+    case yearly   = "Yearly"
+}
+
 // MARK: - Add Item View
 struct AddItemView: View {
     @Environment(\.dismiss) private var dismiss
@@ -72,51 +121,154 @@ struct AddItemView: View {
 
     @State private var title: String = ""
     @State private var subtitle: String = ""
-    @State private var date: Date
+    @State private var scheduleMode: ScheduleMode = .atTime
+    @State private var startDate: Date
+    @State private var endDate: Date
+    @State private var fuzzyDate: Date         // date-only for fuzzy modes
+    @State private var duration: String = ""
+    @State private var repeatOption: RepeatOption = .noRepeat
     @State private var icon: String = "checkmark"
+    @State private var showTimeOfDayPicker = false
+    @State private var showRepeatPicker = false
 
     private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
 
     init(defaultDate: Date) {
         self.defaultDate = defaultDate
-        _date = State(initialValue: defaultDate)
+        let start = defaultDate
+        let end = Calendar.current.date(byAdding: .minute, value: 30, to: defaultDate) ?? defaultDate
+        _startDate  = State(initialValue: start)
+        _endDate    = State(initialValue: end)
+        _fuzzyDate  = State(initialValue: defaultDate)
     }
 
-    // Shared item store would normally live in an @EnvironmentObject or similar.
-    // For now this view dismisses and the parent ItemList manages state.
-    // To wire saving, pass a binding or use an @EnvironmentObject.
+    // Derive a ChecklistItem date from the current state
+    private var resolvedDate: Date {
+        switch scheduleMode {
+        case .atTime:    return startDate
+        case .allDay:    return Calendar.current.startOfDay(for: fuzzyDate)
+        case .todo:      return Date()
+        default:         return Calendar.current.startOfDay(for: fuzzyDate)
+        }
+    }
+
+    private var resolvedDuration: String {
+        switch scheduleMode {
+        case .atTime:
+            let diff = endDate.timeIntervalSince(startDate)
+            if diff <= 0 { return "" }
+            let mins = Int(diff / 60)
+            if mins < 60 { return "\(mins) min" }
+            let hrs = mins / 60
+            let rem = mins % 60
+            return rem == 0 ? "\(hrs) hr" : "\(hrs) hr \(rem) min"
+        default:
+            return duration
+        }
+    }
 
     var body: some View {
         NavigationStack {
             Form {
+                // MARK: Details
                 Section("Details") {
                     HStack {
-                        Text("Title")
-                            .foregroundColor(.secondary)
-                        TextField("Title", text: $title)
-                            .multilineTextAlignment(.trailing)
+                        Text("Title").foregroundColor(.secondary)
+                        TextField("Title", text: $title).multilineTextAlignment(.trailing)
                     }
                     HStack {
-                        Text("Location")
-                            .foregroundColor(.secondary)
-                        TextField("Location", text: $subtitle)
-                            .multilineTextAlignment(.trailing)
+                        Text("Location").foregroundColor(.secondary)
+                        TextField("Location", text: $subtitle).multilineTextAlignment(.trailing)
                     }
                 }
 
+                // MARK: Schedule
                 Section("Schedule") {
-                    DatePicker("Date", selection: $date, displayedComponents: [.date, .hourAndMinute])
+
+                    // --- Time of Day row ---
+                    HStack {
+                        Text("Time of day")
+                        Spacer()
+                        Button {
+                            withAnimation { showTimeOfDayPicker.toggle() }
+                        } label: {
+                            Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
+                                .font(.subheadline)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(timeOfDayBadgeColor())
+                                )
+                                .foregroundColor(timeOfDayBadgeForeground())
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if showTimeOfDayPicker {
+                        timeOfDayPickerContent
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
+
+                    // --- Date / Starts / Ends rows (conditional) ---
+                    if scheduleMode == .atTime {
+                        DatePicker("Starts",
+                                   selection: $startDate,
+                                   displayedComponents: [.date, .hourAndMinute])
+                        DatePicker("Ends",
+                                   selection: $endDate,
+                                   in: startDate...,
+                                   displayedComponents: [.date, .hourAndMinute])
+                    } else if scheduleMode.needsDate {
+                        DatePicker("Date",
+                                   selection: $fuzzyDate,
+                                   displayedComponents: [.date])
+                        // Duration for fuzzy modes (morning / afternoon / evening / anytime)
+                        if scheduleMode != .allDay {
+                            HStack {
+                                Text("Duration").foregroundColor(.secondary)
+                                TextField("e.g. 30 min, 1 hr", text: $duration)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                    }
+
+                    // --- Repeat row ---
+                    HStack {
+                        Text("Repeat")
+                        Spacer()
+                        Button {
+                            withAnimation { showRepeatPicker.toggle() }
+                        } label: {
+                            Label(repeatOption.rawValue, systemImage: "repeat")
+                                .font(.subheadline)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    Capsule()
+                                        .fill(Color(.systemGray5))
+                                )
+                                .foregroundColor(.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if showRepeatPicker {
+                        repeatPickerContent
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                    }
                 }
 
+                // MARK: Icon
                 Section("Icon") {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
                             ForEach(icons, id: \.self) { iconName in
-                                Button(action: {
+                                Button {
                                     let impact = UIImpactFeedbackGenerator(style: .light)
                                     impact.impactOccurred()
                                     icon = iconName
-                                }) {
+                                } label: {
                                     Image(systemName: iconName)
                                         .font(.title2)
                                         .foregroundColor(icon == iconName ? .white : .primary)
@@ -137,18 +289,16 @@ struct AddItemView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                    }
+                    Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
-                        // Post a notification so ItemList can insert the new item
                         let newItem = ChecklistItem(
                             title: title.isEmpty ? "New Item" : title,
                             subtitle: subtitle,
                             icon: icon,
-                            date: date
+                            date: resolvedDate,
+                            duration: resolvedDuration
                         )
                         NotificationCenter.default.post(
                             name: .addChecklistItem,
@@ -160,14 +310,120 @@ struct AddItemView: View {
             }
         }
     }
-}
 
+    // MARK: - Time of Day Picker (inline dropdown)
+    private var timeOfDayPickerContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Time of day group
+            pickerGroupLabel("Time of day")
+            ForEach([ScheduleMode.anytime, .morning, .afternoon, .evening], id: \.self) { mode in
+                pickerRow(mode: mode)
+            }
+            Divider().padding(.vertical, 4)
+            // Event group
+            pickerGroupLabel("Event")
+            ForEach([ScheduleMode.atTime, .allDay], id: \.self) { mode in
+                pickerRow(mode: mode)
+            }
+            Divider().padding(.vertical, 4)
+            // Task group
+            pickerRow(mode: .todo)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func pickerGroupLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(.leading, 4)
+            .padding(.bottom, 2)
+    }
+
+    private func pickerRow(mode: ScheduleMode) -> some View {
+        Button {
+            let impact = UIImpactFeedbackGenerator(style: .light)
+            impact.impactOccurred()
+            scheduleMode = mode
+            showTimeOfDayPicker = false
+        } label: {
+            HStack {
+                if scheduleMode == mode {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 20)
+                } else {
+                    Spacer().frame(width: 20)
+                }
+                Image(systemName: mode.icon)
+                    .frame(width: 20)
+                Text(mode.rawValue)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+    }
+
+    // MARK: - Repeat Picker (inline)
+    private var repeatPickerContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(RepeatOption.allCases, id: \.self) { option in
+                Button {
+                    let impact = UIImpactFeedbackGenerator(style: .light)
+                    impact.impactOccurred()
+                    repeatOption = option
+                    showRepeatPicker = false
+                } label: {
+                    HStack {
+                        if repeatOption == option {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 20)
+                        } else {
+                            Spacer().frame(width: 20)
+                        }
+                        Text(option.rawValue)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    // MARK: - Badge styling helpers
+    private func timeOfDayBadgeColor() -> Color {
+        switch scheduleMode {
+        case .morning:   return Color(red: 0.75, green: 0.70, blue: 0.45) // warm gold
+        case .afternoon: return Color(.systemGray5)
+        case .evening:   return Color(.systemGray5)
+        case .atTime:    return Color(.systemGray5)
+        case .allDay:    return Color(.systemGray5)
+        case .anytime:   return Color(.systemGray5)
+        case .todo:      return Color(.systemGray5)
+        }
+    }
+
+    private func timeOfDayBadgeForeground() -> Color {
+        switch scheduleMode {
+        case .morning: return .white
+        default:       return .primary
+        }
+    }
+}
 extension Notification.Name {
     static let addChecklistItem = Notification.Name("addChecklistItem")
 }
 
 
-// MARK: - Date Header (updated signature)
+// MARK: - Date Header
 struct DateHeader: View {
     @Binding var selectedDate: Date
     @Binding var currentWeekOffset: Int
@@ -292,6 +548,7 @@ struct ChecklistItem: Identifiable {
     var subtitle: String
     var icon: String
     var date: Date
+    var duration: String = ""
     var isComplete: Bool = false
     var notes: String = ""
     var checklist: [ChecklistEntry] = []
@@ -311,19 +568,41 @@ struct ItemRow: View {
         return "\(done)/\(item.checklist.count)"
     }
 
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
+
+    private var timeLabel: String {
+        let time = Self.timeFormatter.string(from: item.date)
+        if item.duration.isEmpty {
+            return time
+        }
+        return "\(time)  ·  \(item.duration)"
+    }
+
     var body: some View {
         HStack {
             Image(systemName: item.icon)
                 .font(fontSize)
                 .padding(.trailing, 8)
-            VStack(alignment: .leading) {
+
+            VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                Text(item.subtitle)
+                if !item.subtitle.isEmpty {
+                    Text(item.subtitle)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+                Text(timeLabel)
                     .font(.caption2)
+                    .foregroundColor(.secondary)
             }
+
             Spacer()
 
-            // Checklist progress badge
             if let progress = checklistProgress {
                 Text(progress)
                     .font(.caption2)
@@ -337,11 +616,15 @@ struct ItemRow: View {
                     .padding(.trailing, 6)
             }
 
-            Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
-                .foregroundColor(item.isComplete ? .green : .primary)
-                .onTapGesture {
-                    onToggle()
-                }
+            // MARK: Complete Button — 44×44 pt touch target
+            Button(action: onToggle) {
+                Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
+                    .foregroundColor(.primary)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .frame(width: 44, height: 44)
+            .contentShape(Rectangle())
         }
         .padding()
         .background(
@@ -420,12 +703,21 @@ struct ItemList: View {
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
         let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
 
+        func time(_ hour: Int, _ minute: Int, from base: Date) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? base
+        }
+
         return [
-            ChecklistItem(title: "Morning Run", subtitle: "Riverside Park", icon: "sunrise", date: today),
-            ChecklistItem(title: "Team Standup", subtitle: "Zoom", icon: "calendar", date: today),
-            ChecklistItem(title: "Buy Groceries", subtitle: "Publix", icon: "checkmark", date: today),
-            ChecklistItem(title: "Doctor Appointment", subtitle: "Mayo Clinic", icon: "calendar", date: tomorrow),
-            ChecklistItem(title: "Call Mom", subtitle: "Home", icon: "checkmark", date: yesterday),
+            ChecklistItem(title: "Morning Run", subtitle: "Riverside Park", icon: "sunrise",
+                          date: time(7, 0, from: today), duration: "45 min"),
+            ChecklistItem(title: "Team Standup", subtitle: "Zoom", icon: "calendar",
+                          date: time(9, 30, from: today), duration: "30 min"),
+            ChecklistItem(title: "Buy Groceries", subtitle: "Publix", icon: "checkmark",
+                          date: time(17, 0, from: today)),
+            ChecklistItem(title: "Doctor Appointment", subtitle: "Mayo Clinic", icon: "calendar",
+                          date: time(10, 0, from: tomorrow), duration: "1 hr"),
+            ChecklistItem(title: "Call Mom", subtitle: "Home", icon: "checkmark",
+                          date: time(14, 0, from: yesterday)),
         ]
     }()
 
@@ -518,6 +810,12 @@ struct ItemDetailView: View {
                 // MARK: Date & Completion
                 Section("Schedule") {
                     DatePicker("Date", selection: $item.date, displayedComponents: [.date, .hourAndMinute])
+                    HStack {
+                        Text("Duration")
+                            .foregroundColor(.secondary)
+                        TextField("e.g. 30 min, 1 hr", text: $item.duration)
+                            .multilineTextAlignment(.trailing)
+                    }
                     Toggle("Completed", isOn: $item.isComplete)
                         .tint(.green)
                 }
