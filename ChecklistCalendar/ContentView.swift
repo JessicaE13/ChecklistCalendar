@@ -177,9 +177,7 @@ struct AddItemView: View {
     @State private var itemColor: Color = .blue
     @State private var showTimeOfDayPicker = false
     @State private var showRepeatPicker = false
-
-    private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
-    private let colors: [Color] = [.blue, .red, .green, .orange, .purple, .pink, .yellow, .cyan, .indigo, .mint, .teal, .brown]
+    @State private var showIconColorPicker = false
 
     init(defaultDate: Date) {
         self.defaultDate = defaultDate
@@ -221,58 +219,27 @@ struct AddItemView: View {
                 // MARK: Details
                 Section("Details") {
                     HStack {
-                        // Icon picker button
-                        Menu {
-                            ForEach(icons, id: \.self) { iconName in
-                                Button {
-                                    let impact = UIImpactFeedbackGenerator(style: .light)
-                                    impact.impactOccurred()
-                                    icon = iconName
-                                } label: {
-                                    Label(iconName, systemImage: iconName)
-                                }
-                            }
+                        // Icon & Color picker button
+                        Button {
+                            showIconColorPicker = true
                         } label: {
-                            Image(systemName: icon)
-                                .font(.title3)
-                                .foregroundColor(.accentColor)
-                                .frame(width: 32, height: 32)
+                            ZStack {
+                                Circle()
+                                    .fill(itemColor)
+                                    .frame(width: 36, height: 36)
+                                
+                                Image(systemName: icon)
+                                    .font(.body)
+                                    .foregroundColor(.white)
+                            }
                         }
+                        .buttonStyle(.plain)
                         
                         TextField("Title", text: $title)
                     }
                     HStack {
                         Text("Location").foregroundColor(.secondary)
                         TextField("Location", text: $subtitle).multilineTextAlignment(.trailing)
-                    }
-                    
-                    // Color picker
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Color").font(.subheadline).foregroundColor(.secondary)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 12) {
-                                ForEach(colors, id: \.self) { color in
-                                    Button {
-                                        let impact = UIImpactFeedbackGenerator(style: .light)
-                                        impact.impactOccurred()
-                                        itemColor = color
-                                    } label: {
-                                        ZStack {
-                                            Circle()
-                                                .fill(color)
-                                                .frame(width: 36, height: 36)
-                                            if itemColor == color {
-                                                Image(systemName: "checkmark")
-                                                    .font(.caption.weight(.bold))
-                                                    .foregroundColor(.white)
-                                            }
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
                     }
                 }
 
@@ -376,6 +343,9 @@ struct AddItemView: View {
                         dismiss()
                     }
                 }
+            }
+            .sheet(isPresented: $showIconColorPicker) {
+                IconColorPickerView(selectedIcon: $icon, selectedColor: $itemColor)
             }
         }
     }
@@ -771,9 +741,8 @@ struct ItemDetailView: View {
     @State private var showTimeOfDayPicker = false
     @State private var showRepeatPicker = false
     @State private var showColorPicker = false
-    
-    private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
-    private let colors: [Color] = [.blue, .red, .green, .orange, .purple, .pink, .yellow, .cyan, .indigo, .mint, .teal, .brown]
+    @State private var showIconColorPicker = false
+    @State private var isScheduleExpanded = false
     
     init(item: ChecklistItem, onDelete: @escaping () -> Void) {
         self.item = item
@@ -818,94 +787,95 @@ struct ItemDetailView: View {
         }
     }
     
+    // Schedule summary for collapsed state
+    private var scheduleSummary: String {
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .medium
+        dateFormatter.timeStyle = .none
+        
+        let timeFormatter = DateFormatter()
+        timeFormatter.dateStyle = .none
+        timeFormatter.timeStyle = .short
+        
+        let dateStr = dateFormatter.string(from: item.date)
+        
+        switch scheduleMode {
+        case .atTime:
+            let startTime = timeFormatter.string(from: startDate)
+            let endTime = timeFormatter.string(from: endDate)
+            let duration = resolvedDuration.isEmpty ? "" : " • \(resolvedDuration)"
+            return "\(dateStr) • \(startTime) - \(endTime)\(duration)"
+        case .allDay:
+            return "\(dateStr) • All day"
+        case .todo:
+            return "To-do"
+        case .morning:
+            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
+            return "\(dateStr) • Morning\(duration)"
+        case .afternoon:
+            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
+            return "\(dateStr) • Afternoon\(duration)"
+        case .evening:
+            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
+            return "\(dateStr) • Evening\(duration)"
+        case .anytime:
+            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
+            return "\(dateStr) • Anytime\(duration)"
+        }
+    }
+    
     var body: some View {
         NavigationStack {
                 VStack(spacing: 0) {
                     // MARK: Title & Icon Header
-                    VStack(spacing: 16) {
-                        HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 0) {
+                        HStack(alignment: .center, spacing: 16) {
                             // Icon picker button
-                            Menu {
-                                ForEach(icons, id: \.self) { icon in
-                                    Button {
-                                        let impact = UIImpactFeedbackGenerator(style: .light)
-                                        impact.impactOccurred()
-                                        item.icon = icon
-                                        try? modelContext.save()
-                                    } label: {
-                                        Label(icon, systemImage: icon)
-                                    }
-                                }
+                            Button {
+                                showIconColorPicker = true
                             } label: {
-                                Image(systemName: item.icon)
-                                    .font(.system(size: 48))
-                                    .foregroundColor(.white)
-                                    .frame(width: 80, height: 80)
+                                ZStack {
+                                    Circle()
+                                        .fill(.white.opacity(0.3))
+                                        .frame(width: 64, height: 64)
+                                    
+                                    Image(systemName: item.icon)
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                }
                             }
+                            .buttonStyle(.plain)
                             
-                            TextField("Title", text: Binding(
-                                get: { item.title },
-                                set: { item.title = $0 }
-                            ))
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                            .foregroundColor(.white)
-                        }
-                        
-                        // Color picker
-                        Button {
-                            withAnimation { showColorPicker.toggle() }
-                        } label: {
-                            HStack {
-                                Circle()
-                                    .fill(.white.opacity(0.3))
-                                    .frame(width: 24, height: 24)
-                                    .overlay(
-                                        Circle()
-                                            .fill(item.uiColor)
-                                            .frame(width: 20, height: 20)
-                                    )
-                                Text("Change Color")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white.opacity(0.9))
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(
-                                Capsule()
-                                    .fill(.white.opacity(0.2))
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        
-                        if showColorPicker {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 12) {
-                                    ForEach(colors, id: \.self) { color in
+                            VStack(alignment: .leading, spacing: 8) {
+                                // Title with underline
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 12) {
+                                        TextField("Title", text: Binding(
+                                            get: { item.title },
+                                            set: { item.title = $0 }
+                                        ))
+                                        .font(.title)
+                                        .fontWeight(.bold)
+                                        .foregroundColor(.white)
+                                        
+                                        // Completion checkbox
                                         Button {
-                                            let impact = UIImpactFeedbackGenerator(style: .light)
+                                            let impact = UIImpactFeedbackGenerator(style: .medium)
                                             impact.impactOccurred()
-                                            item.color = color.toHex()
-                                            try? modelContext.save()
-                                            showColorPicker = false
+                                            item.isComplete.toggle()
                                         } label: {
-                                            ZStack {
-                                                Circle()
-                                                    .fill(color)
-                                                    .frame(width: 36, height: 36)
-                                                if item.uiColor == color {
-                                                    Image(systemName: "checkmark")
-                                                        .font(.caption.weight(.bold))
-                                                        .foregroundColor(.white)
-                                                }
-                                            }
+                                            Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
+                                                .font(.title2)
+                                                .foregroundColor(.white)
                                         }
                                         .buttonStyle(.plain)
                                     }
+                                    
+                                    Rectangle()
+                                        .fill(.white.opacity(0.5))
+                                        .frame(height: 2)
                                 }
-                                .padding(.vertical, 4)
                             }
-                            .transition(.opacity.combined(with: .move(edge: .top)))
                         }
                     }
                     .padding(.horizontal, 20)
@@ -931,100 +901,151 @@ struct ItemDetailView: View {
                     // MARK: Date & Completion
                     Section("Schedule") {
                         
-                        // --- Time of Day row ---
-                        HStack {
-                            Text("Time of day")
-                            Spacer()
+                        // Collapsed view - tap to expand
+                        if !isScheduleExpanded {
                             Button {
-                                withAnimation { showTimeOfDayPicker.toggle() }
-                            } label: {
-                                Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
-                                    .font(.subheadline)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        Capsule()
-                                            .fill(timeOfDayBadgeColor())
-                                    )
-                                    .foregroundColor(timeOfDayBadgeForeground())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        
-                        if showTimeOfDayPicker {
-                            timeOfDayPickerContent
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                        
-                        // --- Date / Starts / Ends rows (conditional) ---
-                        if scheduleMode == .atTime {
-                            DatePicker("Starts",
-                                       selection: $startDate,
-                                       displayedComponents: [.date, .hourAndMinute])
-                            .onChange(of: startDate) { _, newValue in
-                                updateItemDate()
-                                // Ensure end date is after start date
-                                if endDate <= newValue {
-                                    endDate = Calendar.current.date(byAdding: .minute, value: 30, to: newValue) ?? newValue
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    isScheduleExpanded = true
                                 }
-                            }
-                            DatePicker("Ends",
-                                       selection: $endDate,
-                                       in: startDate...,
-                                       displayedComponents: [.date, .hourAndMinute])
-                            .onChange(of: endDate) { _, _ in
-                                item.duration = resolvedDuration
-                            }
-                        } else if scheduleMode.needsDate {
-                            DatePicker("Date",
-                                       selection: $fuzzyDate,
-                                       displayedComponents: [.date])
-                            .onChange(of: fuzzyDate) { _, _ in
-                                updateItemDate()
-                            }
-                            // Duration for fuzzy modes (morning / afternoon / evening / anytime)
-                            if scheduleMode != .allDay {
+                            } label: {
                                 HStack {
-                                    Text("Duration").foregroundColor(.secondary)
-                                    TextField("e.g. 30 min, 1 hr", text: Binding(
-                                        get: { item.duration },
-                                        set: { item.duration = $0 }
-                                    ))
-                                        .multilineTextAlignment(.trailing)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(scheduleSummary)
+                                            .font(.body)
+                                            .foregroundColor(.primary)
+                                            .multilineTextAlignment(.leading)
+                                        
+                                        if repeatOption != .noRepeat {
+                                            Text("Repeats \(repeatOption.rawValue.lowercased())")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                    
+                                    Spacer()
+                                    
+                                    Image(systemName: "chevron.down")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
-                            }
-                        }
-                        
-                        // --- Repeat row ---
-                        HStack {
-                            Text("Repeat")
-                            Spacer()
-                            Button {
-                                withAnimation { showRepeatPicker.toggle() }
-                            } label: {
-                                Label(repeatOption.rawValue, systemImage: "repeat")
-                                    .font(.subheadline)
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        Capsule()
-                                            .fill(Color(.systemGray5))
-                                    )
-                                    .foregroundColor(.primary)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                         }
                         
-                        if showRepeatPicker {
-                            repeatPickerContent
-                                .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
+                        // Expanded view - full editing controls
+                        if isScheduleExpanded {
+                            
+                            // Collapse button
+                            Button {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                    isScheduleExpanded = false
+                                    showTimeOfDayPicker = false
+                                    showRepeatPicker = false
+                                }
+                            } label: {
+                                HStack {
+                                    Text("Collapse")
+                                        .font(.subheadline)
+                                        .foregroundColor(.accentColor)
+                                    Spacer()
+                                    Image(systemName: "chevron.up")
+                                        .font(.caption)
+                                        .foregroundColor(.accentColor)
+                                }
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                         
-                        Toggle("Completed", isOn: Binding(
-                            get: { item.isComplete },
-                            set: { item.isComplete = $0 }
-                        ))
-                            .tint(.green)
+                            // --- Time of Day row ---
+                            HStack {
+                                Text("Time of day")
+                                Spacer()
+                                Button {
+                                    withAnimation { showTimeOfDayPicker.toggle() }
+                                } label: {
+                                    Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
+                                        .font(.subheadline)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            Capsule()
+                                                .fill(timeOfDayBadgeColor())
+                                        )
+                                        .foregroundColor(timeOfDayBadgeForeground())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            
+                            if showTimeOfDayPicker {
+                                timeOfDayPickerContent
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                            
+                            // --- Date / Starts / Ends rows (conditional) ---
+                            if scheduleMode == .atTime {
+                                DatePicker("Starts",
+                                           selection: $startDate,
+                                           displayedComponents: [.date, .hourAndMinute])
+                                .onChange(of: startDate) { _, newValue in
+                                    updateItemDate()
+                                    // Ensure end date is after start date
+                                    if endDate <= newValue {
+                                        endDate = Calendar.current.date(byAdding: .minute, value: 30, to: newValue) ?? newValue
+                                    }
+                                }
+                                DatePicker("Ends",
+                                           selection: $endDate,
+                                           in: startDate...,
+                                           displayedComponents: [.date, .hourAndMinute])
+                                .onChange(of: endDate) { _, _ in
+                                    item.duration = resolvedDuration
+                                }
+                            } else if scheduleMode.needsDate {
+                                DatePicker("Date",
+                                           selection: $fuzzyDate,
+                                           displayedComponents: [.date])
+                                .onChange(of: fuzzyDate) { _, _ in
+                                    updateItemDate()
+                                }
+                                // Duration for fuzzy modes (morning / afternoon / evening / anytime)
+                                if scheduleMode != .allDay {
+                                    HStack {
+                                        Text("Duration").foregroundColor(.secondary)
+                                        TextField("e.g. 30 min, 1 hr", text: Binding(
+                                            get: { item.duration },
+                                            set: { item.duration = $0 }
+                                        ))
+                                            .multilineTextAlignment(.trailing)
+                                    }
+                                }
+                            }
+                            
+                            // --- Repeat row ---
+                            HStack {
+                                Text("Repeat")
+                                Spacer()
+                                Button {
+                                    withAnimation { showRepeatPicker.toggle() }
+                                } label: {
+                                    Label(repeatOption.rawValue, systemImage: "repeat")
+                                        .font(.subheadline)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(
+                                            Capsule()
+                                                .fill(Color(.systemGray5))
+                                        )
+                                        .foregroundColor(.primary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            
+                            if showRepeatPicker {
+                                repeatPickerContent
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
                     }
                     
                     // MARK: Checklist
@@ -1101,16 +1122,46 @@ struct ItemDetailView: View {
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
-                    ToolbarItem(placement: .confirmationAction) {
+                    ToolbarItem(placement: .cancellationAction) {
                         Button {
                             commitNewEntry()
                             dismiss()
                         } label: {
-                            Image(systemName: "checkmark")
-                                .fontWeight(.semibold)
+                            Image(systemName: "xmark")
+                                .font(.body.weight(.semibold))
+                                .foregroundColor(.white)
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu {
+                            Button {
+                                let impact = UIImpactFeedbackGenerator(style: .medium)
+                                impact.impactOccurred()
+                                item.isComplete.toggle()
+                            } label: {
+                                Label(
+                                    item.isComplete ? "Mark as Incomplete" : "Mark as Complete",
+                                    systemImage: item.isComplete ? "circle" : "checkmark.circle"
+                                )
+                            }
+                            
+                            Divider()
+                            
+                            Button(role: .destructive) {
+                                showDeleteConfirmation = true
+                            } label: {
+                                Label("Delete Item", systemImage: "trash")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.body.weight(.semibold))
+                                .foregroundColor(.white)
                         }
                     }
                 }
+                .toolbarBackground(item.uiColor, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
                 .confirmationDialog(
                     "Are you sure you want to delete this item?",
                     isPresented: $showDeleteConfirmation,
@@ -1120,6 +1171,24 @@ struct ItemDetailView: View {
                         onDelete()
                     }
                     Button("Cancel", role: .cancel) { }
+                }
+                .sheet(isPresented: $showIconColorPicker) {
+                    IconColorPickerView(
+                        selectedIcon: Binding(
+                            get: { item.icon },
+                            set: { 
+                                item.icon = $0
+                                try? modelContext.save()
+                            }
+                        ),
+                        selectedColor: Binding(
+                            get: { item.uiColor },
+                            set: { 
+                                item.color = $0.toHex()
+                                try? modelContext.save()
+                            }
+                        )
+                    )
                 }
             }
         }
