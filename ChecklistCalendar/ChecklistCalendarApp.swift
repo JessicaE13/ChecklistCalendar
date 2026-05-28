@@ -14,6 +14,6 @@ struct ChecklistCalendarApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [ChecklistItem.self, ChecklistEntry.self])
+        .modelContainer(for: [ChecklistItem.self, ChecklistEntry.self], isAutosaveEnabled: true)
     }
 }

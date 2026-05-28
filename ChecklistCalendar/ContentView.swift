@@ -8,6 +8,44 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - Color Extension
+extension Color {
+    init?(hex: String) {
+        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var int: UInt64 = 0
+        Scanner(string: hex).scanHexInt64(&int)
+        let a, r, g, b: UInt64
+        switch hex.count {
+        case 3: // RGB (12-bit)
+            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
+        case 6: // RGB (24-bit)
+            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
+        case 8: // ARGB (32-bit)
+            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
+        default:
+            return nil
+        }
+        self.init(
+            .sRGB,
+            red: Double(r) / 255,
+            green: Double(g) / 255,
+            blue:  Double(b) / 255,
+            opacity: Double(a) / 255
+        )
+    }
+    
+    func toHex() -> String {
+        let components = UIColor(self).cgColor.components
+        let r = components?[0] ?? 0
+        let g = components?[1] ?? 0
+        let b = components?[2] ?? 0
+        return String(format: "#%02lX%02lX%02lX",
+                      lroundf(Float(r * 255)),
+                      lroundf(Float(g * 255)),
+                      lroundf(Float(b * 255)))
+    }
+}
+
 // MARK: - Checklist Entry
 @Model
 class ChecklistEntry {
@@ -136,10 +174,12 @@ struct AddItemView: View {
     @State private var duration: String = ""
     @State private var repeatOption: RepeatOption = .noRepeat
     @State private var icon: String = "checkmark"
+    @State private var itemColor: Color = .blue
     @State private var showTimeOfDayPicker = false
     @State private var showRepeatPicker = false
 
     private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
+    private let colors: [Color] = [.blue, .red, .green, .orange, .purple, .pink, .yellow, .cyan, .indigo, .mint, .teal, .brown]
 
     init(defaultDate: Date) {
         self.defaultDate = defaultDate
@@ -181,12 +221,58 @@ struct AddItemView: View {
                 // MARK: Details
                 Section("Details") {
                     HStack {
-                        Text("Title").foregroundColor(.secondary)
-                        TextField("Title", text: $title).multilineTextAlignment(.trailing)
+                        // Icon picker button
+                        Menu {
+                            ForEach(icons, id: \.self) { iconName in
+                                Button {
+                                    let impact = UIImpactFeedbackGenerator(style: .light)
+                                    impact.impactOccurred()
+                                    icon = iconName
+                                } label: {
+                                    Label(iconName, systemImage: iconName)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: icon)
+                                .font(.title3)
+                                .foregroundColor(.accentColor)
+                                .frame(width: 32, height: 32)
+                        }
+                        
+                        TextField("Title", text: $title)
                     }
                     HStack {
                         Text("Location").foregroundColor(.secondary)
                         TextField("Location", text: $subtitle).multilineTextAlignment(.trailing)
+                    }
+                    
+                    // Color picker
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Color").font(.subheadline).foregroundColor(.secondary)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 12) {
+                                ForEach(colors, id: \.self) { color in
+                                    Button {
+                                        let impact = UIImpactFeedbackGenerator(style: .light)
+                                        impact.impactOccurred()
+                                        itemColor = color
+                                    } label: {
+                                        ZStack {
+                                            Circle()
+                                                .fill(color)
+                                                .frame(width: 36, height: 36)
+                                            if itemColor == color {
+                                                Image(systemName: "checkmark")
+                                                    .font(.caption.weight(.bold))
+                                                    .foregroundColor(.white)
+                                            }
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
                     }
                 }
 
@@ -266,32 +352,6 @@ struct AddItemView: View {
                             .transition(.opacity.combined(with: .move(edge: .top)))
                     }
                 }
-
-                // MARK: Icon
-                Section("Icon") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(icons, id: \.self) { iconName in
-                                Button {
-                                    let impact = UIImpactFeedbackGenerator(style: .light)
-                                    impact.impactOccurred()
-                                    icon = iconName
-                                } label: {
-                                    Image(systemName: iconName)
-                                        .font(.title2)
-                                        .foregroundColor(icon == iconName ? .white : .primary)
-                                        .frame(width: 44, height: 44)
-                                        .background(
-                                            Circle()
-                                                .fill(icon == iconName ? Color.accentColor : Color(.systemGray5))
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
             }
             .navigationTitle("New Item")
             .navigationBarTitleDisplayMode(.inline)
@@ -305,6 +365,7 @@ struct AddItemView: View {
                             title: title.isEmpty ? "New Item" : title,
                             subtitle: subtitle,
                             icon: icon,
+                            color: itemColor.toHex(),
                             date: resolvedDate,
                             duration: resolvedDuration
                         )
@@ -556,22 +617,29 @@ class ChecklistItem {
     var title: String
     var subtitle: String
     var icon: String
+    var color: String = "#007AFF"  // Default value for migration compatibility
     var date: Date
     var duration: String
     var isComplete: Bool
     var notes: String
     @Relationship(deleteRule: .cascade) var checklist: [ChecklistEntry]
     
-    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", checklist: [ChecklistEntry] = []) {
+    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#007AFF", date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", checklist: [ChecklistEntry] = []) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.icon = icon
+        self.color = color
         self.date = date
         self.duration = duration
         self.isComplete = isComplete
         self.notes = notes
         self.checklist = checklist
+    }
+    
+    // Helper to convert hex string to Color
+    var uiColor: Color {
+        Color(hex: color) ?? .blue
     }
 }
 
@@ -688,6 +756,7 @@ struct ItemDetailView: View {
     var onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.editMode) private var editMode
+    @Environment(\.modelContext) private var modelContext
     
     @State private var showDeleteConfirmation = false
     @State private var newEntryText: String = ""
@@ -701,8 +770,10 @@ struct ItemDetailView: View {
     @State private var repeatOption: RepeatOption = .noRepeat
     @State private var showTimeOfDayPicker = false
     @State private var showRepeatPicker = false
+    @State private var showColorPicker = false
     
     private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
+    private let colors: [Color] = [.blue, .red, .green, .orange, .purple, .pink, .yellow, .cyan, .indigo, .mint, .teal, .brown]
     
     init(item: ChecklistItem, onDelete: @escaping () -> Void) {
         self.item = item
@@ -749,26 +820,111 @@ struct ItemDetailView: View {
     
     var body: some View {
         NavigationStack {
-                Form {
-                    // MARK: Title & Subtitle
-                    Section("Details") {
-                        HStack {
-                            Text("Title")
-                                .foregroundColor(.secondary)
+                VStack(spacing: 0) {
+                    // MARK: Title & Icon Header
+                    VStack(spacing: 16) {
+                        HStack(alignment: .top, spacing: 16) {
+                            // Icon picker button
+                            Menu {
+                                ForEach(icons, id: \.self) { icon in
+                                    Button {
+                                        let impact = UIImpactFeedbackGenerator(style: .light)
+                                        impact.impactOccurred()
+                                        item.icon = icon
+                                        try? modelContext.save()
+                                    } label: {
+                                        Label(icon, systemImage: icon)
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 48))
+                                    .foregroundColor(.white)
+                                    .frame(width: 80, height: 80)
+                            }
+                            
                             TextField("Title", text: Binding(
                                 get: { item.title },
                                 set: { item.title = $0 }
                             ))
-                                .multilineTextAlignment(.trailing)
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .foregroundColor(.white)
                         }
+                        
+                        // Color picker
+                        Button {
+                            withAnimation { showColorPicker.toggle() }
+                        } label: {
+                            HStack {
+                                Circle()
+                                    .fill(.white.opacity(0.3))
+                                    .frame(width: 24, height: 24)
+                                    .overlay(
+                                        Circle()
+                                            .fill(item.uiColor)
+                                            .frame(width: 20, height: 20)
+                                    )
+                                Text("Change Color")
+                                    .font(.subheadline)
+                                    .foregroundColor(.white.opacity(0.9))
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(
+                                Capsule()
+                                    .fill(.white.opacity(0.2))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        
+                        if showColorPicker {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 12) {
+                                    ForEach(colors, id: \.self) { color in
+                                        Button {
+                                            let impact = UIImpactFeedbackGenerator(style: .light)
+                                            impact.impactOccurred()
+                                            item.color = color.toHex()
+                                            try? modelContext.save()
+                                            showColorPicker = false
+                                        } label: {
+                                            ZStack {
+                                                Circle()
+                                                    .fill(color)
+                                                    .frame(width: 36, height: 36)
+                                                if item.uiColor == color {
+                                                    Image(systemName: "checkmark")
+                                                        .font(.caption.weight(.bold))
+                                                        .foregroundColor(.white)
+                                                }
+                                            }
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                                .padding(.vertical, 4)
+                            }
+                            .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 16)
+                    .padding(.bottom, 16)
+                    .background(item.uiColor)
+                    
+                Form {
+                    // MARK: Location
+                    Section {
                         HStack {
-                            Text("Location")
+                            Image(systemName: "location")
+                                .font(.body)
                                 .foregroundColor(.secondary)
                             TextField("Location", text: Binding(
                                 get: { item.subtitle },
                                 set: { item.subtitle = $0 }
                             ))
-                                .multilineTextAlignment(.trailing)
+                            .font(.body)
                         }
                     }
                     
@@ -871,32 +1027,6 @@ struct ItemDetailView: View {
                             .tint(.green)
                     }
                     
-                    // MARK: Icon Picker
-                    Section("Icon") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 16) {
-                                ForEach(icons, id: \.self) { icon in
-                                    Button(action: {
-                                        let impact = UIImpactFeedbackGenerator(style: .light)
-                                        impact.impactOccurred()
-                                        item.icon = icon
-                                    }) {
-                                        Image(systemName: icon)
-                                            .font(.title2)
-                                            .foregroundColor(item.icon == icon ? .white : .primary)
-                                            .frame(width: 44, height: 44)
-                                            .background(
-                                                Circle()
-                                                    .fill(item.icon == icon ? Color.accentColor : Color(.systemGray5))
-                                            )
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.vertical, 4)
-                        }
-                    }
-                    
                     // MARK: Checklist
                     Section {
                         ForEach(item.checklist) { entry in
@@ -968,13 +1098,16 @@ struct ItemDetailView: View {
                         }
                     }
                 }
-                .navigationTitle("Item")
+                .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("Done") {
+                        Button {
                             commitNewEntry()
                             dismiss()
+                        } label: {
+                            Image(systemName: "checkmark")
+                                .fontWeight(.semibold)
                         }
                     }
                 }
@@ -990,6 +1123,7 @@ struct ItemDetailView: View {
                 }
             }
         }
+    }
     
     // MARK: - Time of Day Picker (inline dropdown)
     private var timeOfDayPickerContent: some View {
