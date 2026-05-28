@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import MapKit
 
 // MARK: - Color Extension
 extension Color {
@@ -592,9 +593,11 @@ class ChecklistItem {
     var duration: String
     var isComplete: Bool
     var notes: String
+    var locationLatitude: Double?
+    var locationLongitude: Double?
     @Relationship(deleteRule: .cascade) var checklist: [ChecklistEntry]
     
-    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#007AFF", date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", checklist: [ChecklistEntry] = []) {
+    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#007AFF", date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", locationLatitude: Double? = nil, locationLongitude: Double? = nil, checklist: [ChecklistEntry] = []) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
@@ -604,12 +607,25 @@ class ChecklistItem {
         self.duration = duration
         self.isComplete = isComplete
         self.notes = notes
+        self.locationLatitude = locationLatitude
+        self.locationLongitude = locationLongitude
         self.checklist = checklist
     }
     
     // Helper to convert hex string to Color
     var uiColor: Color {
         Color(hex: color) ?? .blue
+    }
+    
+    // Helper to check if location exists
+    var hasLocation: Bool {
+        locationLatitude != nil && locationLongitude != nil
+    }
+    
+    // Helper to get CLLocationCoordinate2D
+    var coordinate: CLLocationCoordinate2D? {
+        guard let lat = locationLatitude, let lon = locationLongitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 }
 
@@ -743,6 +759,11 @@ struct ItemDetailView: View {
     @State private var showColorPicker = false
     @State private var showIconColorPicker = false
     @State private var isScheduleExpanded = false
+    @State private var locationSearchText = ""
+    @State private var locationSearchResults: [MKMapItem] = []
+    @State private var isLocationFieldFocused = false
+    @FocusState private var locationFieldFocused: Bool
+    @State private var searchTask: Task<Void, Never>? = nil
     
     init(item: ChecklistItem, onDelete: @escaping () -> Void) {
         self.item = item
@@ -886,15 +907,104 @@ struct ItemDetailView: View {
                 Form {
                     // MARK: Location
                     Section {
-                        HStack {
-                            Image(systemName: "location")
-                                .font(.body)
-                                .foregroundColor(.secondary)
-                            TextField("Location", text: Binding(
-                                get: { item.subtitle },
-                                set: { item.subtitle = $0 }
-                            ))
-                            .font(.body)
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                Image(systemName: "location")
+                                    .font(.body)
+                                    .foregroundColor(.secondary)
+                                
+                                if item.hasLocation && !locationFieldFocused {
+                                    Button {
+                                        openInMaps()
+                                    } label: {
+                                        HStack {
+                                            Text(item.subtitle)
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                            Spacer()
+                                            Image(systemName: "arrow.up.right")
+                                                .font(.caption)
+                                                .foregroundColor(.accentColor)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .contextMenu {
+                                        Button {
+                                            locationSearchText = item.subtitle
+                                            locationFieldFocused = true
+                                        } label: {
+                                            Label("Change Location", systemImage: "pencil")
+                                        }
+                                        Button(role: .destructive) {
+                                            item.subtitle = ""
+                                            item.locationLatitude = nil
+                                            item.locationLongitude = nil
+                                            locationSearchText = ""
+                                            locationSearchResults = []
+                                        } label: {
+                                            Label("Remove Location", systemImage: "trash")
+                                        }
+                                    }
+                                } else {
+                                    TextField("Add location", text: $locationSearchText)
+                                        .font(.body)
+                                        .focused($locationFieldFocused)
+                                        .onChange(of: locationSearchText) { _, newValue in
+                                            searchTask?.cancel()
+                                            searchTask = Task {
+                                                try? await Task.sleep(for: .milliseconds(300))  // 300ms debounce
+                                                guard !Task.isCancelled else { return }
+                                                
+                                                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                                    searchNearbyLocations()
+                                                } else {
+                                                    searchLocations(query: newValue)
+                                                }
+                                            }
+                                        }
+                                        .onChange(of: locationFieldFocused) { _, isFocused in
+                                            if isFocused && locationSearchText.isEmpty {
+                                                // Show nearby suggestions when focusing on empty field
+                                                searchNearbyLocations()
+                                            }
+                                        }
+                                        .onSubmit {
+                                            locationFieldFocused = false
+                                        }
+                                }
+                            }
+                            
+                            // Dropdown suggestions
+                            if locationFieldFocused && !locationSearchResults.isEmpty {
+                                Divider()
+                                    .padding(.vertical, 8)
+                                
+                                ForEach(locationSearchResults, id: \.self) { mapItem in
+                                    Button {
+                                        selectLocation(mapItem)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(mapItem.name ?? "Unknown")
+                                                .font(.body)
+                                                .foregroundColor(.primary)
+                                            
+                                            if let address = formatAddress(for: mapItem) {
+                                                Text(address)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, 8)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    
+                                    if mapItem != locationSearchResults.last {
+                                        Divider()
+                                    }
+                                }
+                            }
                         }
                     }
                     
@@ -1192,6 +1302,148 @@ struct ItemDetailView: View {
                 }
             }
         }
+    }
+    
+    // MARK: - Helper Methods
+    private func openInMaps() {
+        guard let coordinate = item.coordinate else { return }
+        
+        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
+        mapItem.name = item.subtitle
+        
+        mapItem.openInMaps(launchOptions: [
+            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
+        ])
+    }
+    
+    private func searchLocations(query: String) {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else {
+            searchNearbyLocations()
+            return
+        }
+        
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = trimmedQuery
+        request.resultTypes = [.pointOfInterest, .address]
+        
+        // Strong bias toward Jacksonville area
+        let jacksonvilleCenter = CLLocationCoordinate2D(latitude: 30.3322, longitude: -81.6557)
+        request.region = MKCoordinateRegion(
+            center: jacksonvilleCenter,
+            latitudinalMeters: 100_000,
+            longitudinalMeters: 100_000
+        )
+        
+        let search = MKLocalSearch(request: request)
+        search.start { response, error in
+            var results = response?.mapItems ?? []
+            if results.count > 15 {
+                results = Array(results.prefix(15))
+            }
+            
+            self.processFinalResults(results, query: trimmedQuery)
+        }
+    }
+    
+    
+    private func processFinalResults(_ results: [MKMapItem], query: String) {
+        let queryLower = query.lowercased().trimmingCharacters(in: .whitespaces)
+        
+        var scored = results.map { item -> (item: MKMapItem, score: Double) in
+            let name = (item.name ?? "").lowercased()
+            let address = (self.formatAddress(for: item) ?? "").lowercased()
+            let full = name + " " + address
+            
+            var score: Double = 0.0
+            
+            if name.hasPrefix(queryLower) || full.hasPrefix(queryLower) {
+                score += 100
+            } else if name.contains(queryLower) || full.contains(queryLower) {
+                score += 60
+            } else {
+                // Word-by-word matching - helps with partial typing like "Schroe"
+                let queryWords = queryLower.split(separator: " ")
+                let nameWords = name.split(separator: " ")
+                
+                for qWord in queryWords {
+                    if nameWords.contains(where: { $0.hasPrefix(qWord) || $0.contains(qWord) }) {
+                        score += 30
+                    }
+                }
+            }
+            
+            // Bonus for short queries to show more options
+            if queryLower.count <= 6 {
+                score += 15
+            }
+            
+            return (item, score)
+        }
+        
+        scored.sort {
+            $0.score > $1.score ||
+            ($0.score == $1.score && ($0.item.name ?? "") < ($1.item.name ?? ""))
+        }
+        
+        self.locationSearchResults = Array(scored.map { $0.item }.prefix(10))
+    }
+    
+    
+    private func searchNearbyLocations() {
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = "nearby places"
+        request.resultTypes = [.pointOfInterest]
+        
+        let search = MKLocalSearch(request: request)
+        search.start { response, error in
+            if let response = response {
+                locationSearchResults = Array(response.mapItems.prefix(8)) // Show up to 8 nearby places
+            } else {
+                // Fallback to common location types if nearby search fails
+                searchCommonLocations()
+            }
+        }
+    }
+    
+    private func searchCommonLocations() {
+        // Search for common places like "coffee", "restaurant", etc.
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = "coffee shop"
+        request.resultTypes = [.pointOfInterest]
+        
+        let search = MKLocalSearch(request: request)
+        search.start { response, error in
+            if let response = response {
+                locationSearchResults = Array(response.mapItems.prefix(8))
+            } else {
+                locationSearchResults = []
+            }
+        }
+    }
+    
+    private func selectLocation(_ mapItem: MKMapItem) {
+        item.subtitle = mapItem.name ?? ""
+        let coordinate = mapItem.placemark.coordinate
+        item.locationLatitude = coordinate.latitude
+        item.locationLongitude = coordinate.longitude
+        locationSearchText = mapItem.name ?? ""
+        locationSearchResults = []
+        locationFieldFocused = false
+        try? modelContext.save()
+    }
+    
+    private func formatAddress(for mapItem: MKMapItem) -> String? {
+        let placemark = mapItem.placemark
+        
+        // Build address from placemark properties
+        let components = [
+            placemark.thoroughfare,
+            placemark.locality,
+            placemark.administrativeArea
+        ].compactMap { $0 }
+        
+        return components.isEmpty ? nil : components.joined(separator: ", ")
     }
     
     // MARK: - Time of Day Picker (inline dropdown)
