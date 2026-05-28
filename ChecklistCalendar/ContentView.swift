@@ -6,12 +6,20 @@
 //
 
 import SwiftUI
+import SwiftData
 
 // MARK: - Checklist Entry
-struct ChecklistEntry: Identifiable {
-    let id = UUID()
+@Model
+class ChecklistEntry {
+    var id: UUID
     var text: String
-    var isComplete: Bool = false
+    var isComplete: Bool
+    
+    init(id: UUID = UUID(), text: String, isComplete: Bool = false) {
+        self.id = id
+        self.text = text
+        self.isComplete = isComplete
+    }
 }
 
 // MARK: - Main View
@@ -542,101 +550,32 @@ struct WeekRow: View {
 }
 
 // MARK: - Data Model
-struct ChecklistItem: Identifiable {
-    let id = UUID()
+@Model
+class ChecklistItem {
+    var id: UUID
     var title: String
     var subtitle: String
     var icon: String
     var date: Date
-    var duration: String = ""
-    var isComplete: Bool = false
-    var notes: String = ""
-    var checklist: [ChecklistEntry] = []
-}
-
-// MARK: - Item Row
-struct ItemRow: View {
-    let item: ChecklistItem
-    let corner: CGFloat = 16
-    let fontSize: Font = .title2
-    let onTap: () -> Void
-    let onToggle: () -> Void
-
-    private var checklistProgress: String? {
-        guard !item.checklist.isEmpty else { return nil }
-        let done = item.checklist.filter(\.isComplete).count
-        return "\(done)/\(item.checklist.count)"
-    }
-
-    private static let timeFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.timeStyle = .short
-        f.dateStyle = .none
-        return f
-    }()
-
-    private var timeLabel: String {
-        let time = Self.timeFormatter.string(from: item.date)
-        if item.duration.isEmpty {
-            return time
-        }
-        return "\(time)  ·  \(item.duration)"
-    }
-
-    var body: some View {
-        HStack {
-            Image(systemName: item.icon)
-                .font(fontSize)
-                .padding(.trailing, 8)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
-                if !item.subtitle.isEmpty {
-                    Text(item.subtitle)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-                Text(timeLabel)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-            }
-
-            Spacer()
-
-            if let progress = checklistProgress {
-                Text(progress)
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(Color(.systemGray5))
-                    )
-                    .padding(.trailing, 6)
-            }
-
-            // MARK: Complete Button — 44×44 pt touch target
-            Button(action: onToggle) {
-                Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
-                    .foregroundColor(.primary)
-                    .font(.title2)
-            }
-            .buttonStyle(.plain)
-            .frame(width: 44, height: 44)
-            .contentShape(Rectangle())
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: corner)
-                .fill(Color("ItemBackgroundColor"))
-        )
-        .contentShape(Rectangle())
-        .onTapGesture {
-            onTap()
-        }
+    var duration: String
+    var isComplete: Bool
+    var notes: String
+    @Relationship(deleteRule: .cascade) var checklist: [ChecklistEntry]
+    
+    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", checklist: [ChecklistEntry] = []) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.icon = icon
+        self.date = date
+        self.duration = duration
+        self.isComplete = isComplete
+        self.notes = notes
+        self.checklist = checklist
     }
 }
+
+
 
 // MARK: - Item List Pager
 struct ItemListPager: View {
@@ -696,35 +635,14 @@ struct ItemListPager: View {
 struct ItemList: View {
     let selectedDate: Date
     private let calendar = Calendar.current
-
-    @State private var items: [ChecklistItem] = {
-        let calendar = Calendar.current
-        let today = Date()
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today)!
-        let yesterday = calendar.date(byAdding: .day, value: -1, to: today)!
-
-        func time(_ hour: Int, _ minute: Int, from base: Date) -> Date {
-            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: base) ?? base
-        }
-
-        return [
-            ChecklistItem(title: "Morning Run", subtitle: "Riverside Park", icon: "sunrise",
-                          date: time(7, 0, from: today), duration: "45 min"),
-            ChecklistItem(title: "Team Standup", subtitle: "Zoom", icon: "calendar",
-                          date: time(9, 30, from: today), duration: "30 min"),
-            ChecklistItem(title: "Buy Groceries", subtitle: "Publix", icon: "checkmark",
-                          date: time(17, 0, from: today)),
-            ChecklistItem(title: "Doctor Appointment", subtitle: "Mayo Clinic", icon: "calendar",
-                          date: time(10, 0, from: tomorrow), duration: "1 hr"),
-            ChecklistItem(title: "Call Mom", subtitle: "Home", icon: "checkmark",
-                          date: time(14, 0, from: yesterday)),
-        ]
-    }()
+    
+    @Query private var allItems: [ChecklistItem]
+    @Environment(\.modelContext) private var modelContext
 
     @State private var selectedItem: ChecklistItem? = nil
 
     private var filteredItems: [ChecklistItem] {
-        items.filter { calendar.isDate($0.date, inSameDayAs: selectedDate) }
+        allItems.filter { calendar.isDate($0.date, inSameDayAs: selectedDate) }
     }
 
     var body: some View {
@@ -741,9 +659,7 @@ struct ItemList: View {
                             selectedItem = item
                         },
                         onToggle: {
-                            if let index = items.firstIndex(where: { $0.id == item.id }) {
-                                items[index].isComplete.toggle()
-                            }
+                            item.isComplete.toggle()
                         }
                     )
                 }
@@ -751,25 +667,16 @@ struct ItemList: View {
         }
         .sheet(item: $selectedItem) { item in
             ItemDetailView(
-                item: Binding(
-                    get: { items.first(where: { $0.id == item.id }) ?? item },
-                    set: { updated in
-                        if let index = items.firstIndex(where: { $0.id == updated.id }) {
-                            items[index] = updated
-                        }
-                    }
-                ),
+                item: item,
                 onDelete: {
-                    if let index = items.firstIndex(where: { $0.id == item.id }) {
-                        items.remove(at: index)
-                    }
+                    modelContext.delete(item)
                     selectedItem = nil
                 }
             )
         }
         .onReceive(NotificationCenter.default.publisher(for: .addChecklistItem)) { notification in
             if let newItem = notification.object as? ChecklistItem {
-                items.append(newItem)
+                modelContext.insert(newItem)
             }
         }
     }
@@ -777,171 +684,432 @@ struct ItemList: View {
 
 // MARK: - Item Detail Modal
 struct ItemDetailView: View {
-    @Binding var item: ChecklistItem
+    var item: ChecklistItem
     var onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
     @Environment(\.editMode) private var editMode
-
+    
     @State private var showDeleteConfirmation = false
     @State private var newEntryText: String = ""
     @FocusState private var newEntryFocused: Bool
-
+    
+    // Schedule-related state
+    @State private var scheduleMode: ScheduleMode = .atTime
+    @State private var startDate: Date = Date()
+    @State private var endDate: Date = Date()
+    @State private var fuzzyDate: Date = Date()
+    @State private var repeatOption: RepeatOption = .noRepeat
+    @State private var showTimeOfDayPicker = false
+    @State private var showRepeatPicker = false
+    
     private let icons = ["sunrise", "calendar", "checkmark", "star", "bell", "flag", "tag", "envelope", "person", "house"]
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                // MARK: Title & Subtitle
-                Section("Details") {
-                    HStack {
-                        Text("Title")
-                            .foregroundColor(.secondary)
-                        TextField("Title", text: $item.title)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    HStack {
-                        Text("Location")
-                            .foregroundColor(.secondary)
-                        TextField("Location", text: $item.subtitle)
-                            .multilineTextAlignment(.trailing)
-                    }
-                }
-
-                // MARK: Date & Completion
-                Section("Schedule") {
-                    DatePicker("Date", selection: $item.date, displayedComponents: [.date, .hourAndMinute])
-                    HStack {
-                        Text("Duration")
-                            .foregroundColor(.secondary)
-                        TextField("e.g. 30 min, 1 hr", text: $item.duration)
-                            .multilineTextAlignment(.trailing)
-                    }
-                    Toggle("Completed", isOn: $item.isComplete)
-                        .tint(.green)
-                }
-
-                // MARK: Icon Picker
-                Section("Icon") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 16) {
-                            ForEach(icons, id: \.self) { icon in
-                                Button(action: {
-                                    let impact = UIImpactFeedbackGenerator(style: .light)
-                                    impact.impactOccurred()
-                                    item.icon = icon
-                                }) {
-                                    Image(systemName: icon)
-                                        .font(.title2)
-                                        .foregroundColor(item.icon == icon ? .white : .primary)
-                                        .frame(width: 44, height: 44)
-                                        .background(
-                                            Circle()
-                                                .fill(item.icon == icon ? Color.accentColor : Color(.systemGray5))
-                                        )
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-
-                // MARK: Checklist
-                Section {
-                    ForEach($item.checklist) { $entry in
-                        HStack {
-                            Image(systemName: entry.isComplete ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(entry.isComplete ? .green : .secondary)
-                            TextField("Item", text: $entry.text)
-                                .strikethrough(entry.isComplete, color: .secondary)
-                                .foregroundColor(entry.isComplete ? .secondary : .primary)
-                                .disabled(editMode?.wrappedValue != .active)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if editMode?.wrappedValue != .active {
-                                let impact = UIImpactFeedbackGenerator(style: .light)
-                                impact.impactOccurred()
-                                entry.isComplete.toggle()
-                            }
-                        }
-                    }
-                    .onDelete { indexSet in
-                        item.checklist.remove(atOffsets: indexSet)
-                    }
-                    .onMove { from, to in
-                        item.checklist.move(fromOffsets: from, toOffset: to)
-                    }
-
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                            .foregroundColor(.accentColor)
-                        TextField("Add item...", text: $newEntryText)
-                            .focused($newEntryFocused)
-                            .onSubmit {
-                                commitNewEntry()
-                            }
-                    }
-                } header: {
-                    HStack {
-                        Text("Checklist")
-                        Spacer()
-                        EditButton()
-                            .font(.caption)
-                    }
-                }
-
-                // MARK: Notes
-                Section("Notes") {
-                    TextEditor(text: $item.notes)
-                        .frame(minHeight: 100)
-                }
-
-                // MARK: Delete
-                Section {
-                    Button(role: .destructive) {
-                        showDeleteConfirmation = true
-                    } label: {
-                        HStack {
-                            Spacer()
-                            Text("Delete Item")
-                                .foregroundColor(.red)
-                            Spacer()
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Item")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        commitNewEntry()
-                        dismiss()
-                    }
-                }
-            }
-            .confirmationDialog(
-                "Are you sure you want to delete this item?",
-                isPresented: $showDeleteConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Delete", role: .destructive) {
-                    onDelete()
-                }
-                Button("Cancel", role: .cancel) { }
-            }
+    
+    init(item: ChecklistItem, onDelete: @escaping () -> Void) {
+        self.item = item
+        self.onDelete = onDelete
+        
+        // Initialize schedule state based on the item
+        let itemDate = item.date
+        _startDate = State(initialValue: itemDate)
+        _endDate = State(initialValue: Calendar.current.date(byAdding: .minute, value: 30, to: itemDate) ?? itemDate)
+        _fuzzyDate = State(initialValue: Calendar.current.startOfDay(for: itemDate))
+        
+        // Default to .atTime mode
+        _scheduleMode = State(initialValue: .atTime)
+    }
+    
+    // Update the item's date when schedule changes
+    private func updateItemDate() {
+        switch scheduleMode {
+        case .atTime:
+            item.date = startDate
+        case .allDay:
+            item.date = Calendar.current.startOfDay(for: fuzzyDate)
+        case .todo:
+            item.date = Date()
+        default:
+            item.date = Calendar.current.startOfDay(for: fuzzyDate)
         }
     }
-
+    
+    private var resolvedDuration: String {
+        switch scheduleMode {
+        case .atTime:
+            let diff = endDate.timeIntervalSince(startDate)
+            if diff <= 0 { return "" }
+            let mins = Int(diff / 60)
+            if mins < 60 { return "\(mins) min" }
+            let hrs = mins / 60
+            let rem = mins % 60
+            return rem == 0 ? "\(hrs) hr" : "\(hrs) hr \(rem) min"
+        default:
+            return item.duration
+        }
+    }
+    
+    var body: some View {
+        NavigationStack {
+                Form {
+                    // MARK: Title & Subtitle
+                    Section("Details") {
+                        HStack {
+                            Text("Title")
+                                .foregroundColor(.secondary)
+                            TextField("Title", text: Binding(
+                                get: { item.title },
+                                set: { item.title = $0 }
+                            ))
+                                .multilineTextAlignment(.trailing)
+                        }
+                        HStack {
+                            Text("Location")
+                                .foregroundColor(.secondary)
+                            TextField("Location", text: Binding(
+                                get: { item.subtitle },
+                                set: { item.subtitle = $0 }
+                            ))
+                                .multilineTextAlignment(.trailing)
+                        }
+                    }
+                    
+                    // MARK: Date & Completion
+                    Section("Schedule") {
+                        
+                        // --- Time of Day row ---
+                        HStack {
+                            Text("Time of day")
+                            Spacer()
+                            Button {
+                                withAnimation { showTimeOfDayPicker.toggle() }
+                            } label: {
+                                Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
+                                    .font(.subheadline)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule()
+                                            .fill(timeOfDayBadgeColor())
+                                    )
+                                    .foregroundColor(timeOfDayBadgeForeground())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        
+                        if showTimeOfDayPicker {
+                            timeOfDayPickerContent
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        
+                        // --- Date / Starts / Ends rows (conditional) ---
+                        if scheduleMode == .atTime {
+                            DatePicker("Starts",
+                                       selection: $startDate,
+                                       displayedComponents: [.date, .hourAndMinute])
+                            .onChange(of: startDate) { _, newValue in
+                                updateItemDate()
+                                // Ensure end date is after start date
+                                if endDate <= newValue {
+                                    endDate = Calendar.current.date(byAdding: .minute, value: 30, to: newValue) ?? newValue
+                                }
+                            }
+                            DatePicker("Ends",
+                                       selection: $endDate,
+                                       in: startDate...,
+                                       displayedComponents: [.date, .hourAndMinute])
+                            .onChange(of: endDate) { _, _ in
+                                item.duration = resolvedDuration
+                            }
+                        } else if scheduleMode.needsDate {
+                            DatePicker("Date",
+                                       selection: $fuzzyDate,
+                                       displayedComponents: [.date])
+                            .onChange(of: fuzzyDate) { _, _ in
+                                updateItemDate()
+                            }
+                            // Duration for fuzzy modes (morning / afternoon / evening / anytime)
+                            if scheduleMode != .allDay {
+                                HStack {
+                                    Text("Duration").foregroundColor(.secondary)
+                                    TextField("e.g. 30 min, 1 hr", text: Binding(
+                                        get: { item.duration },
+                                        set: { item.duration = $0 }
+                                    ))
+                                        .multilineTextAlignment(.trailing)
+                                }
+                            }
+                        }
+                        
+                        // --- Repeat row ---
+                        HStack {
+                            Text("Repeat")
+                            Spacer()
+                            Button {
+                                withAnimation { showRepeatPicker.toggle() }
+                            } label: {
+                                Label(repeatOption.rawValue, systemImage: "repeat")
+                                    .font(.subheadline)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color(.systemGray5))
+                                    )
+                                    .foregroundColor(.primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        
+                        if showRepeatPicker {
+                            repeatPickerContent
+                                .transition(.opacity.combined(with: .move(edge: .top)))
+                        }
+                        
+                        Toggle("Completed", isOn: Binding(
+                            get: { item.isComplete },
+                            set: { item.isComplete = $0 }
+                        ))
+                            .tint(.green)
+                    }
+                    
+                    // MARK: Icon Picker
+                    Section("Icon") {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 16) {
+                                ForEach(icons, id: \.self) { icon in
+                                    Button(action: {
+                                        let impact = UIImpactFeedbackGenerator(style: .light)
+                                        impact.impactOccurred()
+                                        item.icon = icon
+                                    }) {
+                                        Image(systemName: icon)
+                                            .font(.title2)
+                                            .foregroundColor(item.icon == icon ? .white : .primary)
+                                            .frame(width: 44, height: 44)
+                                            .background(
+                                                Circle()
+                                                    .fill(item.icon == icon ? Color.accentColor : Color(.systemGray5))
+                                            )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                    
+                    // MARK: Checklist
+                    Section {
+                        ForEach(item.checklist) { entry in
+                            HStack {
+                                Image(systemName: entry.isComplete ? "checkmark.circle.fill" : "circle")
+                                    .foregroundColor(entry.isComplete ? .green : .secondary)
+                                TextField("Item", text: Binding(
+                                    get: { entry.text },
+                                    set: { entry.text = $0 }
+                                ))
+                                    .strikethrough(entry.isComplete, color: .secondary)
+                                    .foregroundColor(entry.isComplete ? .secondary : .primary)
+                                    .disabled(editMode?.wrappedValue != .active)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if editMode?.wrappedValue != .active {
+                                    let impact = UIImpactFeedbackGenerator(style: .light)
+                                    impact.impactOccurred()
+                                    entry.isComplete.toggle()
+                                }
+                            }
+                        }
+                        .onDelete { indexSet in
+                            item.checklist.remove(atOffsets: indexSet)
+                        }
+                        .onMove { from, to in
+                            item.checklist.move(fromOffsets: from, toOffset: to)
+                        }
+                        
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.accentColor)
+                            TextField("Add item...", text: $newEntryText)
+                                .focused($newEntryFocused)
+                                .onSubmit {
+                                    commitNewEntry()
+                                }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Checklist")
+                            Spacer()
+                            EditButton()
+                                .font(.caption)
+                        }
+                    }
+                    
+                    // MARK: Notes
+                    Section("Notes") {
+                        TextEditor(text: Binding(
+                            get: { item.notes },
+                            set: { item.notes = $0 }
+                        ))
+                            .frame(minHeight: 100)
+                    }
+                    
+                    // MARK: Delete
+                    Section {
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            HStack {
+                                Spacer()
+                                Text("Delete Item")
+                                    .foregroundColor(.red)
+                                Spacer()
+                            }
+                        }
+                    }
+                }
+                .navigationTitle("Item")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            commitNewEntry()
+                            dismiss()
+                        }
+                    }
+                }
+                .confirmationDialog(
+                    "Are you sure you want to delete this item?",
+                    isPresented: $showDeleteConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete", role: .destructive) {
+                        onDelete()
+                    }
+                    Button("Cancel", role: .cancel) { }
+                }
+            }
+        }
+    
+    // MARK: - Time of Day Picker (inline dropdown)
+    private var timeOfDayPickerContent: some View {
+            VStack(alignment: .leading, spacing: 0) {
+                // Time of day group
+                pickerGroupLabel("Time of day")
+                ForEach([ScheduleMode.anytime, .morning, .afternoon, .evening], id: \.self) { mode in
+                    pickerRow(mode: mode)
+                }
+                Divider().padding(.vertical, 4)
+                // Event group
+                pickerGroupLabel("Event")
+                ForEach([ScheduleMode.atTime, .allDay], id: \.self) { mode in
+                    pickerRow(mode: mode)
+                }
+                Divider().padding(.vertical, 4)
+                // Task group
+                pickerRow(mode: .todo)
+            }
+            .padding(.vertical, 4)
+        }
+    
+    private func pickerGroupLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(.leading, 4)
+            .padding(.bottom, 2)
+    }
+    
+    private func pickerRow(mode: ScheduleMode) -> some View {
+        Button {
+            let impact = UIImpactFeedbackGenerator(style: .light)
+            impact.impactOccurred()
+            scheduleMode = mode
+            showTimeOfDayPicker = false
+            updateItemDate()
+        } label: {
+            HStack {
+                if scheduleMode == mode {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.semibold))
+                        .frame(width: 20)
+                } else {
+                    Spacer().frame(width: 20)
+                }
+                Image(systemName: mode.icon)
+                    .frame(width: 20)
+                Text(mode.rawValue)
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+    }
+    
+    // MARK: - Repeat Picker (inline)
+    private var repeatPickerContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(RepeatOption.allCases, id: \.self) { option in
+                Button {
+                    let impact = UIImpactFeedbackGenerator(style: .light)
+                    impact.impactOccurred()
+                    repeatOption = option
+                    showRepeatPicker = false
+                } label: {
+                    HStack {
+                        if repeatOption == option {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.semibold))
+                                .frame(width: 20)
+                        } else {
+                            Spacer().frame(width: 20)
+                        }
+                        Text(option.rawValue)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+    
+    // MARK: - Badge styling helpers
+    private func timeOfDayBadgeColor() -> Color {
+        switch scheduleMode {
+        case .morning:   return Color(red: 0.75, green: 0.70, blue: 0.45) // warm gold
+        case .afternoon: return Color(.systemGray5)
+        case .evening:   return Color(.systemGray5)
+        case .atTime:    return Color(.systemGray5)
+        case .allDay:    return Color(.systemGray5)
+        case .anytime:   return Color(.systemGray5)
+        case .todo:      return Color(.systemGray5)
+        }
+    }
+    
+    private func timeOfDayBadgeForeground() -> Color {
+        switch scheduleMode {
+        case .morning: return .white
+        default:       return .primary
+        }
+    }
+    
     private func commitNewEntry() {
         let trimmed = newEntryText.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        item.checklist.append(ChecklistEntry(text: trimmed))
+        let newEntry = ChecklistEntry(text: trimmed)
+        item.checklist.append(newEntry)
         newEntryText = ""
     }
 }
 
 #Preview {
     ContentView()
+        .modelContainer(for: [ChecklistItem.self, ChecklistEntry.self])
 }
+
