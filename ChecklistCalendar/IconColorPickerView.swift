@@ -25,6 +25,7 @@ struct IconColorPickerView: View {
     @State private var recentlyUsedIcons: [String] = UserDefaults.standard.stringArray(forKey: "recentlyUsedIcons") ?? []
     
     private let colors: [Color] = [
+        Color(hex: "f13539") ?? .red,              // vibrant red (new default)
         Color(red: 0.85, green: 0.55, blue: 0.52),  // coral
         Color(red: 0.95, green: 0.63, blue: 0.42),  // peach
         Color(red: 0.96, green: 0.73, blue: 0.25),  // orange/yellow
@@ -279,7 +280,7 @@ struct IconColorPickerView: View {
                     Menu {
                         Button("Reset to Default") {
                             selectedIcon = "checkmark"
-                            selectedColor = .blue
+                            selectedColor = ColorPair.colorPairs[0].background  // Default to vibrant red background
                         }
                         Button("Clear Recently Used") {
                             recentlyUsedIcons.removeAll()
@@ -369,6 +370,6 @@ struct IconGrid: View {
 #Preview {
     IconColorPickerView(
         selectedIcon: .constant("sunrise"),
-        selectedColor: .constant(.blue)
+        selectedColor: .constant(Color(hex: "E63946") ?? .red)  // Default vibrant red background
     )
 }

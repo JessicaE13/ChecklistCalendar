@@ -8,6 +8,48 @@
 import SwiftUI
 import SwiftData
 import MapKit
+import CoreLocation
+import Combine
+
+// MARK: - Location Manager
+class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    @Published var userLocation: CLLocationCoordinate2D?
+    @Published var authorizationStatus: CLAuthorizationStatus
+    
+    override init() {
+        self.authorizationStatus = manager.authorizationStatus
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+    }
+    
+    func requestLocation() {
+        manager.requestWhenInUseAuthorization()
+        manager.requestLocation()
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        if let location = locations.first {
+            DispatchQueue.main.async {
+                self.userLocation = location.coordinate
+            }
+        }
+    }
+    
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        print("Location error: \(error.localizedDescription)")
+    }
+    
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        DispatchQueue.main.async {
+            self.authorizationStatus = manager.authorizationStatus
+            if self.authorizationStatus == .authorizedWhenInUse || self.authorizationStatus == .authorizedAlways {
+                manager.requestLocation()
+            }
+        }
+    }
+}
 
 // MARK: - Color Extension
 extension Color {
@@ -44,6 +86,46 @@ extension Color {
                       lroundf(Float(r * 255)),
                       lroundf(Float(g * 255)),
                       lroundf(Float(b * 255)))
+    }
+}
+
+// MARK: - Color Pair
+struct ColorPair {
+    let background: Color
+    let icon: Color
+    
+    init(background: String, icon: String) {
+        self.background = Color(hex: background) ?? .gray
+        self.icon = Color(hex: icon) ?? .white
+    }
+    
+    // Predefined color pairs based on the palette (brighter version)
+    static let colorPairs: [ColorPair] = [
+        ColorPair(background: "E63946", icon: "FF6B7A"),  // vibrant red/bright coral
+        ColorPair(background: "F77F00", icon: "FFB347"),  // bright orange/golden peach
+        ColorPair(background: "FFB703", icon: "FFD966"),  // golden yellow/light yellow
+        ColorPair(background: "06A77D", icon: "4ECDC4"),  // emerald/bright teal
+        ColorPair(background: "00B4D8", icon: "90E0EF"),  // bright cyan/sky blue
+        ColorPair(background: "4895EF", icon: "A9D6E5"),  // bright blue/light blue
+        ColorPair(background: "7209B7", icon: "C77DFF"),  // purple/lavender
+        ColorPair(background: "E91E63", icon: "F48FB1"),  // magenta/pink
+        ColorPair(background: "FB8500", icon: "FFAA4D"),  // tangerine/light orange
+        ColorPair(background: "495057", icon: "ADB5BD"),  // slate/light gray
+    ]
+    
+    // Get color pair for a given color (matches by background color)
+    static func forColor(_ color: Color) -> ColorPair {
+        let hexColor = color.toHex().uppercased().replacingOccurrences(of: "#", with: "")
+        
+        // Try to find exact or close match
+        if let match = colorPairs.first(where: { 
+            $0.background.toHex().uppercased().replacingOccurrences(of: "#", with: "") == hexColor 
+        }) {
+            return match
+        }
+        
+        // Default to first color pair (red/coral)
+        return colorPairs[0]
     }
 }
 
@@ -175,15 +257,32 @@ struct AddItemView: View {
     @State private var duration: String = ""
     @State private var repeatOption: RepeatOption = .noRepeat
     @State private var icon: String = "checkmark"
-    @State private var itemColor: Color = .blue
+    @State private var itemColor: Color = Color(hex: "E63946") ?? .red  // Default vibrant red background
     @State private var showTimeOfDayPicker = false
     @State private var showRepeatPicker = false
     @State private var showIconColorPicker = false
 
     init(defaultDate: Date) {
         self.defaultDate = defaultDate
-        let start = defaultDate
-        let end = Calendar.current.date(byAdding: .minute, value: 30, to: defaultDate) ?? defaultDate
+        
+        // Round to nearest 15 minutes
+        let calendar = Calendar.current
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: defaultDate)
+        let minutes = components.minute ?? 0
+        let roundedMinutes = Int(round(Double(minutes) / 15.0) * 15.0)
+        
+        var roundedComponents = components
+        roundedComponents.minute = roundedMinutes % 60
+        
+        // If rounding pushed us to 60 minutes, increment the hour
+        if roundedMinutes == 60 {
+            roundedComponents.hour = (components.hour ?? 0) + 1
+            roundedComponents.minute = 0
+        }
+        
+        let start = calendar.date(from: roundedComponents) ?? defaultDate
+        let end = calendar.date(byAdding: .minute, value: 30, to: start) ?? start
+        
         _startDate  = State(initialValue: start)
         _endDate    = State(initialValue: end)
         _fuzzyDate  = State(initialValue: defaultDate)
@@ -220,18 +319,20 @@ struct AddItemView: View {
                 // MARK: Details
                 Section("Details") {
                     HStack {
-                        // Icon & Color picker button
+                        // Icon & Color picker button with two-tone
+                        let colorPair = ColorPair.forColor(itemColor)
+                        
                         Button {
                             showIconColorPicker = true
                         } label: {
                             ZStack {
                                 Circle()
-                                    .fill(itemColor)
+                                    .fill(colorPair.background)
                                     .frame(width: 36, height: 36)
                                 
                                 Image(systemName: icon)
                                     .font(.body)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(colorPair.icon)
                             }
                         }
                         .buttonStyle(.plain)
@@ -335,7 +436,8 @@ struct AddItemView: View {
                             icon: icon,
                             color: itemColor.toHex(),
                             date: resolvedDate,
-                            duration: resolvedDuration
+                            duration: resolvedDuration,
+                            repeatOption: repeatOption.rawValue
                         )
                         NotificationCenter.default.post(
                             name: .addChecklistItem,
@@ -588,16 +690,17 @@ class ChecklistItem {
     var title: String
     var subtitle: String
     var icon: String
-    var color: String = "#007AFF"  // Default value for migration compatibility
+    var color: String = "#E63946"  // Default vibrant red background
     var date: Date
     var duration: String
+    var repeatOption: String = "No repeat"  // Store as string for compatibility
     var isComplete: Bool
     var notes: String
     var locationLatitude: Double?
     var locationLongitude: Double?
     @Relationship(deleteRule: .cascade) var checklist: [ChecklistEntry]
     
-    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#007AFF", date: Date, duration: String = "", isComplete: Bool = false, notes: String = "", locationLatitude: Double? = nil, locationLongitude: Double? = nil, checklist: [ChecklistEntry] = []) {
+    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#E63946", date: Date, duration: String = "", repeatOption: String = "No repeat", isComplete: Bool = false, notes: String = "", locationLatitude: Double? = nil, locationLongitude: Double? = nil, checklist: [ChecklistEntry] = []) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
@@ -605,6 +708,7 @@ class ChecklistItem {
         self.color = color
         self.date = date
         self.duration = duration
+        self.repeatOption = repeatOption
         self.isComplete = isComplete
         self.notes = notes
         self.locationLatitude = locationLatitude
@@ -615,6 +719,11 @@ class ChecklistItem {
     // Helper to convert hex string to Color
     var uiColor: Color {
         Color(hex: color) ?? .blue
+    }
+    
+    // Helper to get the color pair for this item
+    var colorPair: ColorPair {
+        ColorPair.forColor(uiColor)
     }
     
     // Helper to check if location exists
@@ -696,7 +805,62 @@ struct ItemList: View {
     @State private var selectedItem: ChecklistItem? = nil
 
     private var filteredItems: [ChecklistItem] {
-        allItems.filter { calendar.isDate($0.date, inSameDayAs: selectedDate) }
+        allItems.filter { item in
+            shouldShowItem(item, on: selectedDate)
+        }
+    }
+    
+    // Determine if an item should be shown on the selected date based on its repeat pattern
+    private func shouldShowItem(_ item: ChecklistItem, on date: Date) -> Bool {
+        let itemDate = calendar.startOfDay(for: item.date)
+        let selectedDay = calendar.startOfDay(for: date)
+        
+        // Don't show items scheduled for future dates
+        if itemDate > selectedDay {
+            return false
+        }
+        
+        // If it's the exact date, always show it
+        if calendar.isDate(itemDate, inSameDayAs: selectedDay) {
+            return true
+        }
+        
+        // Check repeat pattern
+        guard let repeatOption = RepeatOption.allCases.first(where: { $0.rawValue == item.repeatOption }),
+              repeatOption != .noRepeat else {
+            // No repeat - only show on the exact date
+            return false
+        }
+        
+        // Calculate if the selected date matches the repeat pattern
+        switch repeatOption {
+        case .daily:
+            // Show every day from the start date onwards
+            return selectedDay >= itemDate
+            
+        case .weekly:
+            // Show on the same day of the week
+            let itemWeekday = calendar.component(.weekday, from: itemDate)
+            let selectedWeekday = calendar.component(.weekday, from: selectedDay)
+            return itemWeekday == selectedWeekday && selectedDay >= itemDate
+            
+        case .monthly:
+            // Show on the same day of the month
+            let itemDay = calendar.component(.day, from: itemDate)
+            let selectedDayOfMonth = calendar.component(.day, from: selectedDay)
+            return itemDay == selectedDayOfMonth && selectedDay >= itemDate
+            
+        case .yearly:
+            // Show on the same day and month each year
+            let itemDayMonth = calendar.dateComponents([.day, .month], from: itemDate)
+            let selectedDayMonth = calendar.dateComponents([.day, .month], from: selectedDay)
+            return itemDayMonth.day == selectedDayMonth.day &&
+                   itemDayMonth.month == selectedDayMonth.month &&
+                   selectedDay >= itemDate
+            
+        case .noRepeat:
+            return false
+        }
     }
 
     var body: some View {
@@ -744,6 +908,7 @@ struct ItemDetailView: View {
     @Environment(\.editMode) private var editMode
     @Environment(\.modelContext) private var modelContext
     
+    @StateObject private var locationManager = LocationManager()
     @State private var showDeleteConfirmation = false
     @State private var newEntryText: String = ""
     @FocusState private var newEntryFocused: Bool
@@ -764,6 +929,7 @@ struct ItemDetailView: View {
     @State private var isLocationFieldFocused = false
     @FocusState private var locationFieldFocused: Bool
     @State private var searchTask: Task<Void, Never>? = nil
+    @State private var showMapChoice = false
     
     init(item: ChecklistItem, onDelete: @escaping () -> Void) {
         self.item = item
@@ -777,6 +943,13 @@ struct ItemDetailView: View {
         
         // Default to .atTime mode
         _scheduleMode = State(initialValue: .atTime)
+        
+        // Initialize repeatOption from item
+        if let savedRepeat = RepeatOption.allCases.first(where: { $0.rawValue == item.repeatOption }) {
+            _repeatOption = State(initialValue: savedRepeat)
+        } else {
+            _repeatOption = State(initialValue: .noRepeat)
+        }
     }
     
     // Update the item's date when schedule changes
@@ -851,13 +1024,15 @@ struct ItemDetailView: View {
                     // MARK: Title & Icon Header
                     VStack(spacing: 0) {
                         HStack(alignment: .center, spacing: 16) {
-                            // Icon picker button
+                            // Icon picker button with two-tone colors
+                            let colorPair = item.colorPair
+                            
                             Button {
                                 showIconColorPicker = true
                             } label: {
                                 ZStack {
                                     Circle()
-                                        .fill(.white.opacity(0.3))
+                                        .fill(colorPair.icon.opacity(0.3))
                                         .frame(width: 64, height: 64)
                                     
                                     Image(systemName: item.icon)
@@ -915,7 +1090,7 @@ struct ItemDetailView: View {
                                 
                                 if item.hasLocation && !locationFieldFocused {
                                     Button {
-                                        openInMaps()
+                                        showMapChoice = true
                                     } label: {
                                         HStack {
                                             Text(item.subtitle)
@@ -1162,8 +1337,6 @@ struct ItemDetailView: View {
                     Section {
                         ForEach(item.checklist) { entry in
                             HStack {
-                                Image(systemName: entry.isComplete ? "checkmark.circle.fill" : "circle")
-                                    .foregroundColor(entry.isComplete ? .green : .secondary)
                                 TextField("Item", text: Binding(
                                     get: { entry.text },
                                     set: { entry.text = $0 }
@@ -1171,15 +1344,34 @@ struct ItemDetailView: View {
                                     .strikethrough(entry.isComplete, color: .secondary)
                                     .foregroundColor(entry.isComplete ? .secondary : .primary)
                                     .disabled(editMode?.wrappedValue != .active)
-                            }
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                if editMode?.wrappedValue != .active {
+                                
+                                Spacer()
+                                
+                                Button(action: {
                                     let impact = UIImpactFeedbackGenerator(style: .light)
                                     impact.impactOccurred()
                                     entry.isComplete.toggle()
+                                }) {
+                                    ZStack {
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(entry.isComplete ? Color("GrayColor") : .white)
+                                            .frame(width: 22, height: 22)
+                                        
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .strokeBorder(Color("GrayColor"), lineWidth: 2)
+                                            .frame(width: 22, height: 22)
+                                        
+                                        if entry.isComplete {
+                                            Image(systemName: "checkmark")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundColor(.white)
+                                        }
+                                    }
                                 }
+                                .buttonStyle(.plain)
+                                .disabled(editMode?.wrappedValue == .active)
                             }
+                            .contentShape(Rectangle())
                         }
                         .onDelete { indexSet in
                             item.checklist.remove(atOffsets: indexSet)
@@ -1229,6 +1421,8 @@ struct ItemDetailView: View {
                         }
                     }
                 }
+                .scrollContentBackground(.hidden)
+                .background(Color("BackgroundColor"))
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -1300,12 +1494,31 @@ struct ItemDetailView: View {
                         )
                     )
                 }
+                .confirmationDialog(
+                    "Open location in",
+                    isPresented: $showMapChoice,
+                    titleVisibility: .visible
+                ) {
+                    Button {
+                        openInAppleMaps()
+                    } label: {
+                        Text("Apple Maps")
+                    }
+                    
+                    Button {
+                        openInGoogleMaps()
+                    } label: {
+                        Text("Google Maps")
+                    }
+                    
+                    Button("Cancel", role: .cancel) { }
+                }
             }
         }
     }
     
     // MARK: - Helper Methods
-    private func openInMaps() {
+    private func openInAppleMaps() {
         guard let coordinate = item.coordinate else { return }
         
         let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
@@ -1316,6 +1529,25 @@ struct ItemDetailView: View {
         ])
     }
     
+    private func openInGoogleMaps() {
+        guard let coordinate = item.coordinate else { return }
+        
+        // Create Google Maps URL
+        let googleMapsURLString = "comgooglemaps://?daddr=\(coordinate.latitude),\(coordinate.longitude)&directionsmode=driving"
+        
+        if let url = URL(string: googleMapsURLString),
+           UIApplication.shared.canOpenURL(url) {
+            // Google Maps app is installed
+            UIApplication.shared.open(url)
+        } else {
+            // Fallback to Google Maps web
+            let webURLString = "https://www.google.com/maps/dir/?api=1&destination=\(coordinate.latitude),\(coordinate.longitude)&travelmode=driving"
+            if let webURL = URL(string: webURLString) {
+                UIApplication.shared.open(webURL)
+            }
+        }
+    }
+    
     private func searchLocations(query: String) {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty else {
@@ -1323,17 +1555,30 @@ struct ItemDetailView: View {
             return
         }
         
+        // Request location if we don't have it yet
+        if locationManager.userLocation == nil {
+            locationManager.requestLocation()
+        }
+        
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = trimmedQuery
         request.resultTypes = [.pointOfInterest, .address]
         
-        // Strong bias toward Jacksonville area
-        let jacksonvilleCenter = CLLocationCoordinate2D(latitude: 30.3322, longitude: -81.6557)
-        request.region = MKCoordinateRegion(
-            center: jacksonvilleCenter,
-            latitudinalMeters: 100_000,
-            longitudinalMeters: 100_000
-        )
+        // Use user's location if available, otherwise use a default region
+        if let userLocation = locationManager.userLocation {
+            request.region = MKCoordinateRegion(
+                center: userLocation,
+                latitudinalMeters: 50_000,  // 50km radius
+                longitudinalMeters: 50_000
+            )
+        } else {
+            // Fallback to a broader search if location isn't available
+            request.region = MKCoordinateRegion(
+                center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
+                latitudinalMeters: 500_000,
+                longitudinalMeters: 500_000
+            )
+        }
         
         let search = MKLocalSearch(request: request)
         search.start { response, error in
@@ -1391,9 +1636,23 @@ struct ItemDetailView: View {
     
     
     private func searchNearbyLocations() {
+        // Request location if we don't have it yet
+        if locationManager.userLocation == nil {
+            locationManager.requestLocation()
+        }
+        
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = "nearby places"
         request.resultTypes = [.pointOfInterest]
+        
+        // Use user's location if available
+        if let userLocation = locationManager.userLocation {
+            request.region = MKCoordinateRegion(
+                center: userLocation,
+                latitudinalMeters: 10_000,  // 10km radius for nearby places
+                longitudinalMeters: 10_000
+            )
+        }
         
         let search = MKLocalSearch(request: request)
         search.start { response, error in
@@ -1511,6 +1770,7 @@ struct ItemDetailView: View {
                     let impact = UIImpactFeedbackGenerator(style: .light)
                     impact.impactOccurred()
                     repeatOption = option
+                    item.repeatOption = option.rawValue
                     showRepeatPicker = false
                 } label: {
                     HStack {
