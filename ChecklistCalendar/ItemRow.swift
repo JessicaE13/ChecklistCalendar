@@ -8,12 +8,20 @@
 import SwiftUI
 
 // MARK: - Item Row
+
 struct ItemRow: View {
     let item: ChecklistItem
+    /// The day this row is being rendered on — repeating items show
+    /// completion for this occurrence, not globally.
+    let displayDate: Date
     let corner: CGFloat = 12
     let fontSize: Font = .title2
     let onTap: () -> Void
     let onToggle: () -> Void
+
+    private var isCompleted: Bool {
+        item.isCompleted(on: displayDate)
+    }
 
     private var checklistProgress: String? {
         guard !item.checklist.isEmpty else { return nil }
@@ -27,79 +35,62 @@ struct ItemRow: View {
         f.dateStyle = .none
         return f
     }()
-    
-    private func parseDuration(_ duration: String) -> Int? {
-        // Parse duration string like "30 min", "1 hr", "1 hr 30 min"
-        var totalMinutes = 0
-        let components = duration.components(separatedBy: " ")
-        
-        var i = 0
-        while i < components.count {
-            if let value = Int(components[i]) {
-                if i + 1 < components.count {
-                    let unit = components[i + 1]
-                    if unit.hasPrefix("hr") {
-                        totalMinutes += value * 60
-                    } else if unit.hasPrefix("min") {
-                        totalMinutes += value
-                    }
-                }
-                i += 2
-            } else {
-                i += 1
-            }
-        }
-        
-        return totalMinutes > 0 ? totalMinutes : nil
-    }
-    
+
     private func formatTime(_ date: Date, showPeriod: Bool) -> String {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
-        
+
         let hour12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour)
         let period = hour < 12 ? "am" : "pm"
-        
+
         if minute == 0 {
             return showPeriod ? "\(hour12)\(period)" : "\(hour12)"
         } else {
             return showPeriod ? "\(hour12):\(String(format: "%02d", minute))\(period)" : "\(hour12):\(String(format: "%02d", minute))"
         }
     }
-    
+
     private func isPM(_ date: Date) -> Bool {
-        let calendar = Calendar.current
-        let hour = calendar.component(.hour, from: date)
-        return hour >= 12
+        Calendar.current.component(.hour, from: date) >= 12
     }
 
     private var timeLabel: String {
-        var label = ""
-        
-        // If there's a duration, try to parse it and show as a time range
-        if let durationMinutes = parseDuration(item.duration) {
-            let calendar = Calendar.current
-            if let endDate = calendar.date(byAdding: .minute, value: durationMinutes, to: item.date) {
+        var label: String
+
+        switch item.scheduleMode {
+        case .atTime:
+            if let endDate = item.endDate {
                 let startIsPM = isPM(item.date)
                 let endIsPM = isPM(endDate)
-                
+
                 // Only show AM/PM on start time if it differs from end time
                 let startTime = formatTime(item.date, showPeriod: startIsPM != endIsPM)
                 let endTime = formatTime(endDate, showPeriod: true)
-                
+
                 label = "\(startTime) - \(endTime)"
+            } else {
+                label = Self.timeFormatter.string(from: item.date)
             }
-        } else {
-            // Fallback to just showing the start time
-            label = Self.timeFormatter.string(from: item.date)
+
+        case .allDay:
+            label = "All day"
+
+        case .todo:
+            label = "To-do"
+
+        default:
+            // Fuzzy modes: "Morning • 45 min"
+            label = item.scheduleMode.rawValue
+            if !item.durationLabel.isEmpty {
+                label += " • \(item.durationLabel)"
+            }
         }
-        
-        // Add recurring symbol if item repeats
-        if item.repeatOption != "No repeat" {
+
+        if item.isRepeating {
             label += " ↻"
         }
-        
+
         return label
     }
 
@@ -107,7 +98,7 @@ struct ItemRow: View {
         HStack(spacing: 0) {
             // Icon with two-tone colored background, rounded only on left side
             let colorPair = item.colorPair
-            
+
             ZStack {
                 UnevenRoundedRectangle(
                     topLeadingRadius: corner,
@@ -116,7 +107,7 @@ struct ItemRow: View {
                     topTrailingRadius: 0
                 )
                 .fill(colorPair.background)
-                
+
                 Image(systemName: item.icon)
                     .font(.title3)
                     .foregroundColor(colorPair.icon)
@@ -155,14 +146,14 @@ struct ItemRow: View {
             Button(action: onToggle) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(item.isComplete ? Color(.systemGray) : .white)
+                        .fill(isCompleted ? Color(.systemGray) : .white)
                         .frame(width: 28, height: 28)
-                    
+
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(Color(.systemGray), lineWidth: 2)
                         .frame(width: 28, height: 28)
-                    
-                    if item.isComplete {
+
+                    if isCompleted {
                         Image(systemName: "checkmark")
                             .font(.body.weight(.semibold))
                             .foregroundColor(.white)
@@ -187,6 +178,7 @@ struct ItemRow: View {
 }
 
 // MARK: - Preview
+
 #Preview {
     ItemRow(
         item: ChecklistItem(
@@ -194,8 +186,9 @@ struct ItemRow: View {
             subtitle: "Riverside Park",
             icon: "sunrise",
             date: Date(),
-            duration: "45 min"
+            durationMinutes: 45
         ),
+        displayDate: Date(),
         onTap: {},
         onToggle: {}
     )

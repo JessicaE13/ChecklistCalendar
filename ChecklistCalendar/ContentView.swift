@@ -7,153 +7,44 @@
 
 import SwiftUI
 import SwiftData
-import MapKit
-import CoreLocation
-import Combine
-
-// MARK: - Location Manager
-class LocationManager: NSObject, ObservableObject, CLLocationManagerDelegate {
-    private let manager = CLLocationManager()
-    @Published var userLocation: CLLocationCoordinate2D?
-    @Published var authorizationStatus: CLAuthorizationStatus
-    
-    override init() {
-        self.authorizationStatus = manager.authorizationStatus
-        super.init()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyBest
-    }
-    
-    func requestLocation() {
-        manager.requestWhenInUseAuthorization()
-        manager.requestLocation()
-    }
-    
-    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        if let location = locations.first {
-            DispatchQueue.main.async {
-                self.userLocation = location.coordinate
-            }
-        }
-    }
-    
-    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("Location error: \(error.localizedDescription)")
-    }
-    
-    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
-        DispatchQueue.main.async {
-            self.authorizationStatus = manager.authorizationStatus
-            if self.authorizationStatus == .authorizedWhenInUse || self.authorizationStatus == .authorizedAlways {
-                manager.requestLocation()
-            }
-        }
-    }
-}
-
-// MARK: - Color Extension
-extension Color {
-    init?(hex: String) {
-        let hex = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-        var int: UInt64 = 0
-        Scanner(string: hex).scanHexInt64(&int)
-        let a, r, g, b: UInt64
-        switch hex.count {
-        case 3: // RGB (12-bit)
-            (a, r, g, b) = (255, (int >> 8) * 17, (int >> 4 & 0xF) * 17, (int & 0xF) * 17)
-        case 6: // RGB (24-bit)
-            (a, r, g, b) = (255, int >> 16, int >> 8 & 0xFF, int & 0xFF)
-        case 8: // ARGB (32-bit)
-            (a, r, g, b) = (int >> 24, int >> 16 & 0xFF, int >> 8 & 0xFF, int & 0xFF)
-        default:
-            return nil
-        }
-        self.init(
-            .sRGB,
-            red: Double(r) / 255,
-            green: Double(g) / 255,
-            blue:  Double(b) / 255,
-            opacity: Double(a) / 255
-        )
-    }
-    
-    func toHex() -> String {
-        let components = UIColor(self).cgColor.components
-        let r = components?[0] ?? 0
-        let g = components?[1] ?? 0
-        let b = components?[2] ?? 0
-        return String(format: "#%02lX%02lX%02lX",
-                      lroundf(Float(r * 255)),
-                      lroundf(Float(g * 255)),
-                      lroundf(Float(b * 255)))
-    }
-}
-
-// MARK: - Color Pair
-struct ColorPair {
-    let background: Color
-    let icon: Color
-    
-    init(background: String, icon: String) {
-        self.background = Color(hex: background) ?? .gray
-        self.icon = Color(hex: icon) ?? .white
-    }
-    
-    // Predefined color pairs based on the palette (brighter version)
-    static let colorPairs: [ColorPair] = [
-        ColorPair(background: "E63946", icon: "FF6B7A"),  // vibrant red/bright coral
-        ColorPair(background: "F77F00", icon: "FFB347"),  // bright orange/golden peach
-        ColorPair(background: "FFB703", icon: "FFD966"),  // golden yellow/light yellow
-        ColorPair(background: "06A77D", icon: "4ECDC4"),  // emerald/bright teal
-        ColorPair(background: "00B4D8", icon: "90E0EF"),  // bright cyan/sky blue
-        ColorPair(background: "4895EF", icon: "A9D6E5"),  // bright blue/light blue
-        ColorPair(background: "7209B7", icon: "C77DFF"),  // purple/lavender
-        ColorPair(background: "E91E63", icon: "F48FB1"),  // magenta/pink
-        ColorPair(background: "FB8500", icon: "FFAA4D"),  // tangerine/light orange
-        ColorPair(background: "495057", icon: "ADB5BD"),  // slate/light gray
-    ]
-    
-    // Get color pair for a given color (matches by background color)
-    static func forColor(_ color: Color) -> ColorPair {
-        let hexColor = color.toHex().uppercased().replacingOccurrences(of: "#", with: "")
-        
-        // Try to find exact or close match
-        if let match = colorPairs.first(where: { 
-            $0.background.toHex().uppercased().replacingOccurrences(of: "#", with: "") == hexColor 
-        }) {
-            return match
-        }
-        
-        // Default to first color pair (red/coral)
-        return colorPairs[0]
-    }
-}
-
-// MARK: - Checklist Entry
-@Model
-class ChecklistEntry {
-    var id: UUID
-    var text: String
-    var isComplete: Bool
-    
-    init(id: UUID = UUID(), text: String, isComplete: Bool = false) {
-        self.id = id
-        self.text = text
-        self.isComplete = isComplete
-    }
-}
 
 // MARK: - Main View
+
 struct ContentView: View {
     @State private var selectedDate: Date = Date()
     @State private var currentWeekOffset: Int = 0
     @State private var showAddItem: Bool = false
+    
+    private let calendar = Calendar.current
+    
+    // Calculate the week offset for a given date
+    private func weekOffset(for date: Date) -> Int {
+        let today = calendar.startOfDay(for: Date())
+        let weekday = calendar.component(.weekday, from: today)
+        let daysFromSunday = weekday - 1
+        guard let thisSunday = calendar.date(byAdding: .day, value: -daysFromSunday, to: today),
+              let targetSunday = calendar.date(
+                byAdding: .day,
+                value: -(calendar.component(.weekday, from: date) - 1),
+                to: calendar.startOfDay(for: date)
+              ) else { return 0 }
+        return calendar.dateComponents([.weekOfYear], from: thisSunday, to: targetSunday).weekOfYear ?? 0
+    }
 
     var body: some View {
         ZStack {
             Color("BackgroundColor").ignoresSafeArea()
-            VStack() {
-                TopHeader()
+            VStack {
+                TopHeader(
+                    selectedDate: selectedDate,
+                    selectedDateBinding: Binding(
+                        get: { selectedDate },
+                        set: { newDate in
+                            selectedDate = newDate
+                            currentWeekOffset = weekOffset(for: newDate)
+                        }
+                    )
+                )
                     .padding(8)
                 DateHeader(selectedDate: $selectedDate, currentWeekOffset: $currentWeekOffset)
                     .padding(8)
@@ -167,7 +58,25 @@ struct ContentView: View {
             VStack {
                 Spacer()
                 HStack {
+                    // Today button
+                    Button(action: {
+                        let impact = UIImpactFeedbackGenerator(style: .light)
+                        impact.impactOccurred()
+                        selectedDate = Date()
+                        currentWeekOffset = 0
+                    }) {
+                        Text("Today")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.glass)
+                    .padding(.leading, 24)
+                    
                     Spacer()
+                    
+                    // Add button
                     Button(action: {
                         let impact = UIImpactFeedbackGenerator(style: .medium)
                         impact.impactOccurred()
@@ -175,397 +84,24 @@ struct ContentView: View {
                     }) {
                         Image(systemName: "plus")
                             .font(.title2.weight(.semibold))
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                             .frame(width: 56, height: 56)
-                            .background(Color.primary)
-                            .clipShape(Circle())
                     }
+                    .buttonStyle(.glass)
                     .padding(.trailing, 24)
-                    .padding(.bottom, 24)
                 }
+                .padding(.bottom, 24)
             }
         }
+        .tint(.red)
         .sheet(isPresented: $showAddItem) {
             AddItemView(defaultDate: selectedDate)
         }
     }
 }
 
-
-// MARK: - Schedule Mode
-enum ScheduleMode: String, CaseIterable {
-    // Time of day (fuzzy)
-    case anytime = "Anytime"
-    case morning = "Morning"
-    case afternoon = "Afternoon"
-    case evening = "Evening"
-    // Event (precise)
-    case atTime = "At time"
-    case allDay = "All day"
-    // Task
-    case todo = "To-do"
-
-    var icon: String {
-        switch self {
-        case .anytime:   return "clock"
-        case .morning:   return "sunrise"
-        case .afternoon: return "sun.max"
-        case .evening:   return "moon.stars"
-        case .atTime:    return "calendar.badge.clock"
-        case .allDay:    return "clock"
-        case .todo:      return "tray"
-        }
-    }
-
-    /// Whether this mode uses fuzzy time-of-day rather than a specific time
-    var isFuzzy: Bool {
-        switch self {
-        case .morning, .afternoon, .evening, .anytime, .allDay, .todo: return true
-        case .atTime: return false
-        }
-    }
-
-    /// Whether this mode needs a date picker at all
-    var needsDate: Bool {
-        switch self {
-        case .todo: return false
-        default: return true
-        }
-    }
-}
-
-enum RepeatOption: String, CaseIterable {
-    case noRepeat = "No repeat"
-    case daily    = "Daily"
-    case weekly   = "Weekly"
-    case monthly  = "Monthly"
-    case yearly   = "Yearly"
-}
-
-// MARK: - Add Item View
-struct AddItemView: View {
-    @Environment(\.dismiss) private var dismiss
-
-    let defaultDate: Date
-
-    @State private var title: String = ""
-    @State private var subtitle: String = ""
-    @State private var scheduleMode: ScheduleMode = .atTime
-    @State private var startDate: Date
-    @State private var endDate: Date
-    @State private var fuzzyDate: Date         // date-only for fuzzy modes
-    @State private var duration: String = ""
-    @State private var repeatOption: RepeatOption = .noRepeat
-    @State private var icon: String = "checkmark"
-    @State private var itemColor: Color = Color(hex: "E63946") ?? .red  // Default vibrant red background
-    @State private var showTimeOfDayPicker = false
-    @State private var showRepeatPicker = false
-    @State private var showIconColorPicker = false
-
-    init(defaultDate: Date) {
-        self.defaultDate = defaultDate
-        
-        // Round to nearest 15 minutes
-        let calendar = Calendar.current
-        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: defaultDate)
-        let minutes = components.minute ?? 0
-        let roundedMinutes = Int(round(Double(minutes) / 15.0) * 15.0)
-        
-        var roundedComponents = components
-        roundedComponents.minute = roundedMinutes % 60
-        
-        // If rounding pushed us to 60 minutes, increment the hour
-        if roundedMinutes == 60 {
-            roundedComponents.hour = (components.hour ?? 0) + 1
-            roundedComponents.minute = 0
-        }
-        
-        let start = calendar.date(from: roundedComponents) ?? defaultDate
-        let end = calendar.date(byAdding: .minute, value: 30, to: start) ?? start
-        
-        _startDate  = State(initialValue: start)
-        _endDate    = State(initialValue: end)
-        _fuzzyDate  = State(initialValue: defaultDate)
-    }
-
-    // Derive a ChecklistItem date from the current state
-    private var resolvedDate: Date {
-        switch scheduleMode {
-        case .atTime:    return startDate
-        case .allDay:    return Calendar.current.startOfDay(for: fuzzyDate)
-        case .todo:      return Date()
-        default:         return Calendar.current.startOfDay(for: fuzzyDate)
-        }
-    }
-
-    private var resolvedDuration: String {
-        switch scheduleMode {
-        case .atTime:
-            let diff = endDate.timeIntervalSince(startDate)
-            if diff <= 0 { return "" }
-            let mins = Int(diff / 60)
-            if mins < 60 { return "\(mins) min" }
-            let hrs = mins / 60
-            let rem = mins % 60
-            return rem == 0 ? "\(hrs) hr" : "\(hrs) hr \(rem) min"
-        default:
-            return duration
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                // MARK: Details
-                Section("Details") {
-                    HStack {
-                        // Icon & Color picker button with two-tone
-                        let colorPair = ColorPair.forColor(itemColor)
-                        
-                        Button {
-                            showIconColorPicker = true
-                        } label: {
-                            ZStack {
-                                Circle()
-                                    .fill(colorPair.background)
-                                    .frame(width: 36, height: 36)
-                                
-                                Image(systemName: icon)
-                                    .font(.body)
-                                    .foregroundColor(colorPair.icon)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        
-                        TextField("Title", text: $title)
-                    }
-                    HStack {
-                        Text("Location").foregroundColor(.secondary)
-                        TextField("Location", text: $subtitle).multilineTextAlignment(.trailing)
-                    }
-                }
-
-                // MARK: Schedule
-                Section("Schedule") {
-
-                    // --- Time of Day row ---
-                    HStack {
-                        Text("Time of day")
-                        Spacer()
-                        Button {
-                            withAnimation { showTimeOfDayPicker.toggle() }
-                        } label: {
-                            Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
-                                .font(.subheadline)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(timeOfDayBadgeColor())
-                                )
-                                .foregroundColor(timeOfDayBadgeForeground())
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if showTimeOfDayPicker {
-                        timeOfDayPickerContent
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-
-                    // --- Date / Starts / Ends rows (conditional) ---
-                    if scheduleMode == .atTime {
-                        DatePicker("Starts",
-                                   selection: $startDate,
-                                   displayedComponents: [.date, .hourAndMinute])
-                        DatePicker("Ends",
-                                   selection: $endDate,
-                                   in: startDate...,
-                                   displayedComponents: [.date, .hourAndMinute])
-                    } else if scheduleMode.needsDate {
-                        DatePicker("Date",
-                                   selection: $fuzzyDate,
-                                   displayedComponents: [.date])
-                        // Duration for fuzzy modes (morning / afternoon / evening / anytime)
-                        if scheduleMode != .allDay {
-                            HStack {
-                                Text("Duration").foregroundColor(.secondary)
-                                TextField("e.g. 30 min, 1 hr", text: $duration)
-                                    .multilineTextAlignment(.trailing)
-                            }
-                        }
-                    }
-
-                    // --- Repeat row ---
-                    HStack {
-                        Text("Repeat")
-                        Spacer()
-                        Button {
-                            withAnimation { showRepeatPicker.toggle() }
-                        } label: {
-                            Label(repeatOption.rawValue, systemImage: "repeat")
-                                .font(.subheadline)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    Capsule()
-                                        .fill(Color(.systemGray5))
-                                )
-                                .foregroundColor(.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if showRepeatPicker {
-                        repeatPickerContent
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                    }
-                }
-            }
-            .navigationTitle("New Item")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") {
-                        let newItem = ChecklistItem(
-                            title: title.isEmpty ? "New Item" : title,
-                            subtitle: subtitle,
-                            icon: icon,
-                            color: itemColor.toHex(),
-                            date: resolvedDate,
-                            duration: resolvedDuration,
-                            repeatOption: repeatOption.rawValue
-                        )
-                        NotificationCenter.default.post(
-                            name: .addChecklistItem,
-                            object: newItem
-                        )
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(isPresented: $showIconColorPicker) {
-                IconColorPickerView(selectedIcon: $icon, selectedColor: $itemColor)
-            }
-        }
-    }
-
-    // MARK: - Time of Day Picker (inline dropdown)
-    private var timeOfDayPickerContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Time of day group
-            pickerGroupLabel("Time of day")
-            ForEach([ScheduleMode.anytime, .morning, .afternoon, .evening], id: \.self) { mode in
-                pickerRow(mode: mode)
-            }
-            Divider().padding(.vertical, 4)
-            // Event group
-            pickerGroupLabel("Event")
-            ForEach([ScheduleMode.atTime, .allDay], id: \.self) { mode in
-                pickerRow(mode: mode)
-            }
-            Divider().padding(.vertical, 4)
-            // Task group
-            pickerRow(mode: .todo)
-        }
-        .padding(.vertical, 4)
-    }
-
-    private func pickerGroupLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .padding(.leading, 4)
-            .padding(.bottom, 2)
-    }
-
-    private func pickerRow(mode: ScheduleMode) -> some View {
-        Button {
-            let impact = UIImpactFeedbackGenerator(style: .light)
-            impact.impactOccurred()
-            scheduleMode = mode
-            showTimeOfDayPicker = false
-        } label: {
-            HStack {
-                if scheduleMode == mode {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 20)
-                } else {
-                    Spacer().frame(width: 20)
-                }
-                Image(systemName: mode.icon)
-                    .frame(width: 20)
-                Text(mode.rawValue)
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
-    }
-
-    // MARK: - Repeat Picker (inline)
-    private var repeatPickerContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(RepeatOption.allCases, id: \.self) { option in
-                Button {
-                    let impact = UIImpactFeedbackGenerator(style: .light)
-                    impact.impactOccurred()
-                    repeatOption = option
-                    showRepeatPicker = false
-                } label: {
-                    HStack {
-                        if repeatOption == option {
-                            Image(systemName: "checkmark")
-                                .font(.caption.weight(.semibold))
-                                .frame(width: 20)
-                        } else {
-                            Spacer().frame(width: 20)
-                        }
-                        Text(option.rawValue)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Badge styling helpers
-    private func timeOfDayBadgeColor() -> Color {
-        switch scheduleMode {
-        case .morning:   return Color(red: 0.75, green: 0.70, blue: 0.45) // warm gold
-        case .afternoon: return Color(.systemGray5)
-        case .evening:   return Color(.systemGray5)
-        case .atTime:    return Color(.systemGray5)
-        case .allDay:    return Color(.systemGray5)
-        case .anytime:   return Color(.systemGray5)
-        case .todo:      return Color(.systemGray5)
-        }
-    }
-
-    private func timeOfDayBadgeForeground() -> Color {
-        switch scheduleMode {
-        case .morning: return .white
-        default:       return .primary
-        }
-    }
-}
-extension Notification.Name {
-    static let addChecklistItem = Notification.Name("addChecklistItem")
-}
-
-
 // MARK: - Date Header
+
 struct DateHeader: View {
     @Binding var selectedDate: Date
     @Binding var currentWeekOffset: Int
@@ -654,8 +190,10 @@ struct WeekRow: View {
                                     .fill(Color.red)
                                     .frame(width: 36, height: 36)
                             } else if isSelectedNotToday {
+                                // .primary adapts to dark mode (was Color.black,
+                                // which vanished against a dark background)
                                 Circle()
-                                    .fill(Color.black)
+                                    .fill(Color.primary)
                                     .frame(width: 36, height: 36)
                             }
 
@@ -663,11 +201,13 @@ struct WeekRow: View {
                                 .font(.title2)
                                 .fontWeight(isSelected ? .semibold : .regular)
                                 .foregroundColor(
-                                    isSelected
+                                    isTodaySelected
                                         ? .white
-                                        : isToday
-                                            ? .red
-                                            : .primary
+                                        : isSelectedNotToday
+                                            ? Color(.systemBackground)
+                                            : isToday
+                                                ? .red
+                                                : .primary
                                 )
                         }
                         .frame(width: 36, height: 36)
@@ -683,70 +223,16 @@ struct WeekRow: View {
     }
 }
 
-// MARK: - Data Model
-@Model
-class ChecklistItem {
-    var id: UUID
-    var title: String
-    var subtitle: String
-    var icon: String
-    var color: String = "#E63946"  // Default vibrant red background
-    var date: Date
-    var duration: String
-    var repeatOption: String = "No repeat"  // Store as string for compatibility
-    var isComplete: Bool
-    var notes: String
-    var locationLatitude: Double?
-    var locationLongitude: Double?
-    @Relationship(deleteRule: .cascade) var checklist: [ChecklistEntry]
-    
-    init(id: UUID = UUID(), title: String, subtitle: String, icon: String, color: String = "#E63946", date: Date, duration: String = "", repeatOption: String = "No repeat", isComplete: Bool = false, notes: String = "", locationLatitude: Double? = nil, locationLongitude: Double? = nil, checklist: [ChecklistEntry] = []) {
-        self.id = id
-        self.title = title
-        self.subtitle = subtitle
-        self.icon = icon
-        self.color = color
-        self.date = date
-        self.duration = duration
-        self.repeatOption = repeatOption
-        self.isComplete = isComplete
-        self.notes = notes
-        self.locationLatitude = locationLatitude
-        self.locationLongitude = locationLongitude
-        self.checklist = checklist
-    }
-    
-    // Helper to convert hex string to Color
-    var uiColor: Color {
-        Color(hex: color) ?? .blue
-    }
-    
-    // Helper to get the color pair for this item
-    var colorPair: ColorPair {
-        ColorPair.forColor(uiColor)
-    }
-    
-    // Helper to check if location exists
-    var hasLocation: Bool {
-        locationLatitude != nil && locationLongitude != nil
-    }
-    
-    // Helper to get CLLocationCoordinate2D
-    var coordinate: CLLocationCoordinate2D? {
-        guard let lat = locationLatitude, let lon = locationLongitude else { return nil }
-        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
-    }
-}
-
-
-
 // MARK: - Item List Pager
+
 struct ItemListPager: View {
     @Binding var selectedDate: Date
     @Binding var currentWeekOffset: Int
 
     private let calendar = Calendar.current
-    private let dayRange = -365...365
+    // ±364 days = exactly ±52 weeks, so the day pager and week header
+    // can always reach each other's boundaries.
+    private let dayRange = -364...364
 
     private var selectedDayOffset: Int {
         let today = calendar.startOfDay(for: Date())
@@ -795,69 +281,73 @@ struct ItemListPager: View {
 }
 
 // MARK: - Item List
+
 struct ItemList: View {
     let selectedDate: Date
     private let calendar = Calendar.current
-    
+
     @Query private var allItems: [ChecklistItem]
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedItem: ChecklistItem? = nil
 
     private var filteredItems: [ChecklistItem] {
-        allItems.filter { item in
-            shouldShowItem(item, on: selectedDate)
-        }
+        allItems
+            .filter { shouldShowItem($0, on: selectedDate) }
+            .sorted { lhs, rhs in
+                if lhs.sortMinutes != rhs.sortMinutes {
+                    return lhs.sortMinutes < rhs.sortMinutes
+                }
+                return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+            }
     }
-    
-    // Determine if an item should be shown on the selected date based on its repeat pattern
+
+    // Determine if an item should be shown on the selected date.
     private func shouldShowItem(_ item: ChecklistItem, on date: Date) -> Bool {
-        let itemDate = calendar.startOfDay(for: item.date)
+        let itemDay = calendar.startOfDay(for: item.date)
         let selectedDay = calendar.startOfDay(for: date)
-        
+
+        // To-dos: visible every day from creation until completed.
+        // Once completed, they remain only on the day they were finished.
+        if item.scheduleMode == .todo {
+            if item.isComplete {
+                guard let completedAt = item.completedAt else { return false }
+                return calendar.isDate(completedAt, inSameDayAs: selectedDay)
+            }
+            return selectedDay >= itemDay
+        }
+
         // Don't show items scheduled for future dates
-        if itemDate > selectedDay {
+        if itemDay > selectedDay {
             return false
         }
-        
+
         // If it's the exact date, always show it
-        if calendar.isDate(itemDate, inSameDayAs: selectedDay) {
+        if calendar.isDate(itemDay, inSameDayAs: selectedDay) {
             return true
         }
-        
-        // Check repeat pattern
-        guard let repeatOption = RepeatOption.allCases.first(where: { $0.rawValue == item.repeatOption }),
-              repeatOption != .noRepeat else {
-            // No repeat - only show on the exact date
-            return false
-        }
-        
-        // Calculate if the selected date matches the repeat pattern
-        switch repeatOption {
+
+        // Only repeating items appear on other days
+        guard item.isRepeating else { return false }
+
+        switch item.repeatRule {
         case .daily:
-            // Show every day from the start date onwards
-            return selectedDay >= itemDate
-            
+            return true
+
         case .weekly:
-            // Show on the same day of the week
-            let itemWeekday = calendar.component(.weekday, from: itemDate)
-            let selectedWeekday = calendar.component(.weekday, from: selectedDay)
-            return itemWeekday == selectedWeekday && selectedDay >= itemDate
-            
+            return calendar.component(.weekday, from: itemDay)
+                == calendar.component(.weekday, from: selectedDay)
+
         case .monthly:
-            // Show on the same day of the month
-            let itemDay = calendar.component(.day, from: itemDate)
-            let selectedDayOfMonth = calendar.component(.day, from: selectedDay)
-            return itemDay == selectedDayOfMonth && selectedDay >= itemDate
-            
+            return calendar.component(.day, from: itemDay)
+                == calendar.component(.day, from: selectedDay)
+
         case .yearly:
-            // Show on the same day and month each year
-            let itemDayMonth = calendar.dateComponents([.day, .month], from: itemDate)
+            let itemDayMonth = calendar.dateComponents([.day, .month], from: itemDay)
             let selectedDayMonth = calendar.dateComponents([.day, .month], from: selectedDay)
-            return itemDayMonth.day == selectedDayMonth.day &&
-                   itemDayMonth.month == selectedDayMonth.month &&
-                   selectedDay >= itemDate
-            
+            return itemDayMonth.day == selectedDayMonth.day
+                && itemDayMonth.month == selectedDayMonth.month
+
         case .noRepeat:
             return false
         }
@@ -873,11 +363,12 @@ struct ItemList: View {
                 ForEach(filteredItems) { item in
                     ItemRow(
                         item: item,
+                        displayDate: selectedDate,
                         onTap: {
                             selectedItem = item
                         },
                         onToggle: {
-                            item.isComplete.toggle()
+                            item.toggleCompletion(on: selectedDate)
                         }
                     )
                 }
@@ -886,940 +377,13 @@ struct ItemList: View {
         .sheet(item: $selectedItem) { item in
             ItemDetailView(
                 item: item,
+                occurrenceDate: selectedDate,
                 onDelete: {
                     modelContext.delete(item)
                     selectedItem = nil
                 }
             )
         }
-        .onReceive(NotificationCenter.default.publisher(for: .addChecklistItem)) { notification in
-            if let newItem = notification.object as? ChecklistItem {
-                modelContext.insert(newItem)
-            }
-        }
-    }
-}
-
-// MARK: - Item Detail Modal
-struct ItemDetailView: View {
-    var item: ChecklistItem
-    var onDelete: () -> Void
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.editMode) private var editMode
-    @Environment(\.modelContext) private var modelContext
-    
-    @StateObject private var locationManager = LocationManager()
-    @State private var showDeleteConfirmation = false
-    @State private var newEntryText: String = ""
-    @FocusState private var newEntryFocused: Bool
-    
-    // Schedule-related state
-    @State private var scheduleMode: ScheduleMode = .atTime
-    @State private var startDate: Date = Date()
-    @State private var endDate: Date = Date()
-    @State private var fuzzyDate: Date = Date()
-    @State private var repeatOption: RepeatOption = .noRepeat
-    @State private var showTimeOfDayPicker = false
-    @State private var showRepeatPicker = false
-    @State private var showColorPicker = false
-    @State private var showIconColorPicker = false
-    @State private var isScheduleExpanded = false
-    @State private var locationSearchText = ""
-    @State private var locationSearchResults: [MKMapItem] = []
-    @State private var isLocationFieldFocused = false
-    @FocusState private var locationFieldFocused: Bool
-    @State private var searchTask: Task<Void, Never>? = nil
-    @State private var showMapChoice = false
-    
-    init(item: ChecklistItem, onDelete: @escaping () -> Void) {
-        self.item = item
-        self.onDelete = onDelete
-        
-        // Initialize schedule state based on the item
-        let itemDate = item.date
-        _startDate = State(initialValue: itemDate)
-        _endDate = State(initialValue: Calendar.current.date(byAdding: .minute, value: 30, to: itemDate) ?? itemDate)
-        _fuzzyDate = State(initialValue: Calendar.current.startOfDay(for: itemDate))
-        
-        // Default to .atTime mode
-        _scheduleMode = State(initialValue: .atTime)
-        
-        // Initialize repeatOption from item
-        if let savedRepeat = RepeatOption.allCases.first(where: { $0.rawValue == item.repeatOption }) {
-            _repeatOption = State(initialValue: savedRepeat)
-        } else {
-            _repeatOption = State(initialValue: .noRepeat)
-        }
-    }
-    
-    // Update the item's date when schedule changes
-    private func updateItemDate() {
-        switch scheduleMode {
-        case .atTime:
-            item.date = startDate
-        case .allDay:
-            item.date = Calendar.current.startOfDay(for: fuzzyDate)
-        case .todo:
-            item.date = Date()
-        default:
-            item.date = Calendar.current.startOfDay(for: fuzzyDate)
-        }
-    }
-    
-    private var resolvedDuration: String {
-        switch scheduleMode {
-        case .atTime:
-            let diff = endDate.timeIntervalSince(startDate)
-            if diff <= 0 { return "" }
-            let mins = Int(diff / 60)
-            if mins < 60 { return "\(mins) min" }
-            let hrs = mins / 60
-            let rem = mins % 60
-            return rem == 0 ? "\(hrs) hr" : "\(hrs) hr \(rem) min"
-        default:
-            return item.duration
-        }
-    }
-    
-    // Schedule summary for collapsed state
-    private var scheduleSummary: String {
-        let dateFormatter = DateFormatter()
-        dateFormatter.dateStyle = .medium
-        dateFormatter.timeStyle = .none
-        
-        let timeFormatter = DateFormatter()
-        timeFormatter.dateStyle = .none
-        timeFormatter.timeStyle = .short
-        
-        let dateStr = dateFormatter.string(from: item.date)
-        
-        switch scheduleMode {
-        case .atTime:
-            let startTime = timeFormatter.string(from: startDate)
-            let endTime = timeFormatter.string(from: endDate)
-            let duration = resolvedDuration.isEmpty ? "" : " • \(resolvedDuration)"
-            return "\(dateStr) • \(startTime) - \(endTime)\(duration)"
-        case .allDay:
-            return "\(dateStr) • All day"
-        case .todo:
-            return "To-do"
-        case .morning:
-            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
-            return "\(dateStr) • Morning\(duration)"
-        case .afternoon:
-            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
-            return "\(dateStr) • Afternoon\(duration)"
-        case .evening:
-            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
-            return "\(dateStr) • Evening\(duration)"
-        case .anytime:
-            let duration = item.duration.isEmpty ? "" : " • \(item.duration)"
-            return "\(dateStr) • Anytime\(duration)"
-        }
-    }
-    
-    var body: some View {
-        NavigationStack {
-                VStack(spacing: 0) {
-                    // MARK: Title & Icon Header
-                    VStack(spacing: 0) {
-                        HStack(alignment: .center, spacing: 16) {
-                            // Icon picker button with two-tone colors
-                            let colorPair = item.colorPair
-                            
-                            Button {
-                                showIconColorPicker = true
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(colorPair.icon.opacity(0.3))
-                                        .frame(width: 64, height: 64)
-                                    
-                                    Image(systemName: item.icon)
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                }
-                            }
-                            .buttonStyle(.plain)
-                            
-                            VStack(alignment: .leading, spacing: 8) {
-                                // Title with underline
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 12) {
-                                        TextField("Title", text: Binding(
-                                            get: { item.title },
-                                            set: { item.title = $0 }
-                                        ))
-                                        .font(.title)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
-                                        
-                                        // Completion checkbox
-                                        Button {
-                                            let impact = UIImpactFeedbackGenerator(style: .medium)
-                                            impact.impactOccurred()
-                                            item.isComplete.toggle()
-                                        } label: {
-                                            Image(systemName: item.isComplete ? "checkmark.circle.fill" : "circle")
-                                                .font(.title2)
-                                                .foregroundColor(.white)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                    
-                                    Rectangle()
-                                        .fill(.white.opacity(0.5))
-                                        .frame(height: 2)
-                                }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 16)
-                    .padding(.bottom, 16)
-                    .background(item.uiColor)
-                    
-                Form {
-                    // MARK: Location
-                    Section {
-                        VStack(alignment: .leading, spacing: 0) {
-                            HStack {
-                                Image(systemName: "location")
-                                    .font(.body)
-                                    .foregroundColor(.secondary)
-                                
-                                if item.hasLocation && !locationFieldFocused {
-                                    Button {
-                                        showMapChoice = true
-                                    } label: {
-                                        HStack {
-                                            Text(item.subtitle)
-                                                .font(.body)
-                                                .foregroundColor(.primary)
-                                            Spacer()
-                                            Image(systemName: "arrow.up.right")
-                                                .font(.caption)
-                                                .foregroundColor(.accentColor)
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        Button {
-                                            locationSearchText = item.subtitle
-                                            locationFieldFocused = true
-                                        } label: {
-                                            Label("Change Location", systemImage: "pencil")
-                                        }
-                                        Button(role: .destructive) {
-                                            item.subtitle = ""
-                                            item.locationLatitude = nil
-                                            item.locationLongitude = nil
-                                            locationSearchText = ""
-                                            locationSearchResults = []
-                                        } label: {
-                                            Label("Remove Location", systemImage: "trash")
-                                        }
-                                    }
-                                } else {
-                                    TextField("Add location", text: $locationSearchText)
-                                        .font(.body)
-                                        .focused($locationFieldFocused)
-                                        .onChange(of: locationSearchText) { _, newValue in
-                                            searchTask?.cancel()
-                                            searchTask = Task {
-                                                try? await Task.sleep(for: .milliseconds(300))  // 300ms debounce
-                                                guard !Task.isCancelled else { return }
-                                                
-                                                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                                    searchNearbyLocations()
-                                                } else {
-                                                    searchLocations(query: newValue)
-                                                }
-                                            }
-                                        }
-                                        .onChange(of: locationFieldFocused) { _, isFocused in
-                                            if isFocused && locationSearchText.isEmpty {
-                                                // Show nearby suggestions when focusing on empty field
-                                                searchNearbyLocations()
-                                            }
-                                        }
-                                        .onSubmit {
-                                            locationFieldFocused = false
-                                        }
-                                }
-                            }
-                            
-                            // Dropdown suggestions
-                            if locationFieldFocused && !locationSearchResults.isEmpty {
-                                Divider()
-                                    .padding(.vertical, 8)
-                                
-                                ForEach(locationSearchResults, id: \.self) { mapItem in
-                                    Button {
-                                        selectLocation(mapItem)
-                                    } label: {
-                                        VStack(alignment: .leading, spacing: 4) {
-                                            Text(mapItem.name ?? "Unknown")
-                                                .font(.body)
-                                                .foregroundColor(.primary)
-                                            
-                                            if let address = formatAddress(for: mapItem) {
-                                                Text(address)
-                                                    .font(.caption)
-                                                    .foregroundColor(.secondary)
-                                            }
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.vertical, 8)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    
-                                    if mapItem != locationSearchResults.last {
-                                        Divider()
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    
-                    // MARK: Date & Completion
-                    Section("Schedule") {
-                        
-                        // Collapsed view - tap to expand
-                        if !isScheduleExpanded {
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    isScheduleExpanded = true
-                                }
-                            } label: {
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(scheduleSummary)
-                                            .font(.body)
-                                            .foregroundColor(.primary)
-                                            .multilineTextAlignment(.leading)
-                                        
-                                        if repeatOption != .noRepeat {
-                                            Text("Repeats \(repeatOption.rawValue.lowercased())")
-                                                .font(.caption)
-                                                .foregroundColor(.secondary)
-                                        }
-                                    }
-                                    
-                                    Spacer()
-                                    
-                                    Image(systemName: "chevron.down")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        
-                        // Expanded view - full editing controls
-                        if isScheduleExpanded {
-                            
-                            // Collapse button
-                            Button {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                                    isScheduleExpanded = false
-                                    showTimeOfDayPicker = false
-                                    showRepeatPicker = false
-                                }
-                            } label: {
-                                HStack {
-                                    Text("Collapse")
-                                        .font(.subheadline)
-                                        .foregroundColor(.accentColor)
-                                    Spacer()
-                                    Image(systemName: "chevron.up")
-                                        .font(.caption)
-                                        .foregroundColor(.accentColor)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        
-                            // --- Time of Day row ---
-                            HStack {
-                                Text("Time of day")
-                                Spacer()
-                                Button {
-                                    withAnimation { showTimeOfDayPicker.toggle() }
-                                } label: {
-                                    Label(scheduleMode.rawValue, systemImage: scheduleMode.icon)
-                                        .font(.subheadline)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            Capsule()
-                                                .fill(timeOfDayBadgeColor())
-                                        )
-                                        .foregroundColor(timeOfDayBadgeForeground())
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            
-                            if showTimeOfDayPicker {
-                                timeOfDayPickerContent
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-                            
-                            // --- Date / Starts / Ends rows (conditional) ---
-                            if scheduleMode == .atTime {
-                                DatePicker("Starts",
-                                           selection: $startDate,
-                                           displayedComponents: [.date, .hourAndMinute])
-                                .onChange(of: startDate) { _, newValue in
-                                    updateItemDate()
-                                    // Ensure end date is after start date
-                                    if endDate <= newValue {
-                                        endDate = Calendar.current.date(byAdding: .minute, value: 30, to: newValue) ?? newValue
-                                    }
-                                }
-                                DatePicker("Ends",
-                                           selection: $endDate,
-                                           in: startDate...,
-                                           displayedComponents: [.date, .hourAndMinute])
-                                .onChange(of: endDate) { _, _ in
-                                    item.duration = resolvedDuration
-                                }
-                            } else if scheduleMode.needsDate {
-                                DatePicker("Date",
-                                           selection: $fuzzyDate,
-                                           displayedComponents: [.date])
-                                .onChange(of: fuzzyDate) { _, _ in
-                                    updateItemDate()
-                                }
-                                // Duration for fuzzy modes (morning / afternoon / evening / anytime)
-                                if scheduleMode != .allDay {
-                                    HStack {
-                                        Text("Duration").foregroundColor(.secondary)
-                                        TextField("e.g. 30 min, 1 hr", text: Binding(
-                                            get: { item.duration },
-                                            set: { item.duration = $0 }
-                                        ))
-                                            .multilineTextAlignment(.trailing)
-                                    }
-                                }
-                            }
-                            
-                            // --- Repeat row ---
-                            HStack {
-                                Text("Repeat")
-                                Spacer()
-                                Button {
-                                    withAnimation { showRepeatPicker.toggle() }
-                                } label: {
-                                    Label(repeatOption.rawValue, systemImage: "repeat")
-                                        .font(.subheadline)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            Capsule()
-                                                .fill(Color(.systemGray5))
-                                        )
-                                        .foregroundColor(.primary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            
-                            if showRepeatPicker {
-                                repeatPickerContent
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
-                            }
-                        }
-                    }
-                    
-                    // MARK: Checklist
-                    Section {
-                        ForEach(item.checklist) { entry in
-                            HStack {
-                                TextField("Item", text: Binding(
-                                    get: { entry.text },
-                                    set: { entry.text = $0 }
-                                ))
-                                    .strikethrough(entry.isComplete, color: .secondary)
-                                    .foregroundColor(entry.isComplete ? .secondary : .primary)
-                                    .disabled(editMode?.wrappedValue != .active)
-                                
-                                Spacer()
-                                
-                                Button(action: {
-                                    let impact = UIImpactFeedbackGenerator(style: .light)
-                                    impact.impactOccurred()
-                                    entry.isComplete.toggle()
-                                }) {
-                                    ZStack {
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .fill(entry.isComplete ? Color("GrayColor") : .white)
-                                            .frame(width: 22, height: 22)
-                                        
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .strokeBorder(Color("GrayColor"), lineWidth: 2)
-                                            .frame(width: 22, height: 22)
-                                        
-                                        if entry.isComplete {
-                                            Image(systemName: "checkmark")
-                                                .font(.caption.weight(.semibold))
-                                                .foregroundColor(.white)
-                                        }
-                                    }
-                                }
-                                .buttonStyle(.plain)
-                                .disabled(editMode?.wrappedValue == .active)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .onDelete { indexSet in
-                            item.checklist.remove(atOffsets: indexSet)
-                        }
-                        .onMove { from, to in
-                            item.checklist.move(fromOffsets: from, toOffset: to)
-                        }
-                        
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                                .foregroundColor(.accentColor)
-                            TextField("Add item...", text: $newEntryText)
-                                .focused($newEntryFocused)
-                                .onSubmit {
-                                    commitNewEntry()
-                                }
-                        }
-                    } header: {
-                        HStack {
-                            Text("Checklist")
-                            Spacer()
-                            EditButton()
-                                .font(.caption)
-                        }
-                    }
-                    
-                    // MARK: Notes
-                    Section("Notes") {
-                        TextEditor(text: Binding(
-                            get: { item.notes },
-                            set: { item.notes = $0 }
-                        ))
-                            .frame(minHeight: 100)
-                    }
-                    
-                    // MARK: Delete
-                    Section {
-                        Button(role: .destructive) {
-                            showDeleteConfirmation = true
-                        } label: {
-                            HStack {
-                                Spacer()
-                                Text("Delete Item")
-                                    .foregroundColor(.red)
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-                .scrollContentBackground(.hidden)
-                .background(Color("BackgroundColor"))
-                .navigationTitle("")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button {
-                            commitNewEntry()
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.body.weight(.semibold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    
-                    ToolbarItem(placement: .primaryAction) {
-                        Menu {
-                            Button {
-                                let impact = UIImpactFeedbackGenerator(style: .medium)
-                                impact.impactOccurred()
-                                item.isComplete.toggle()
-                            } label: {
-                                Label(
-                                    item.isComplete ? "Mark as Incomplete" : "Mark as Complete",
-                                    systemImage: item.isComplete ? "circle" : "checkmark.circle"
-                                )
-                            }
-                            
-                            Divider()
-                            
-                            Button(role: .destructive) {
-                                showDeleteConfirmation = true
-                            } label: {
-                                Label("Delete Item", systemImage: "trash")
-                            }
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.body.weight(.semibold))
-                                .foregroundColor(.white)
-                        }
-                    }
-                }
-                .toolbarBackground(item.uiColor, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .confirmationDialog(
-                    "Are you sure you want to delete this item?",
-                    isPresented: $showDeleteConfirmation,
-                    titleVisibility: .visible
-                ) {
-                    Button("Delete", role: .destructive) {
-                        onDelete()
-                    }
-                    Button("Cancel", role: .cancel) { }
-                }
-                .sheet(isPresented: $showIconColorPicker) {
-                    IconColorPickerView(
-                        selectedIcon: Binding(
-                            get: { item.icon },
-                            set: { 
-                                item.icon = $0
-                                try? modelContext.save()
-                            }
-                        ),
-                        selectedColor: Binding(
-                            get: { item.uiColor },
-                            set: { 
-                                item.color = $0.toHex()
-                                try? modelContext.save()
-                            }
-                        )
-                    )
-                }
-                .confirmationDialog(
-                    "Open location in",
-                    isPresented: $showMapChoice,
-                    titleVisibility: .visible
-                ) {
-                    Button {
-                        openInAppleMaps()
-                    } label: {
-                        Text("Apple Maps")
-                    }
-                    
-                    Button {
-                        openInGoogleMaps()
-                    } label: {
-                        Text("Google Maps")
-                    }
-                    
-                    Button("Cancel", role: .cancel) { }
-                }
-            }
-        }
-    }
-    
-    // MARK: - Helper Methods
-    private func openInAppleMaps() {
-        guard let coordinate = item.coordinate else { return }
-        
-        let mapItem = MKMapItem(placemark: MKPlacemark(coordinate: coordinate))
-        mapItem.name = item.subtitle
-        
-        mapItem.openInMaps(launchOptions: [
-            MKLaunchOptionsDirectionsModeKey: MKLaunchOptionsDirectionsModeDriving
-        ])
-    }
-    
-    private func openInGoogleMaps() {
-        guard let coordinate = item.coordinate else { return }
-        
-        // Create Google Maps URL
-        let googleMapsURLString = "comgooglemaps://?daddr=\(coordinate.latitude),\(coordinate.longitude)&directionsmode=driving"
-        
-        if let url = URL(string: googleMapsURLString),
-           UIApplication.shared.canOpenURL(url) {
-            // Google Maps app is installed
-            UIApplication.shared.open(url)
-        } else {
-            // Fallback to Google Maps web
-            let webURLString = "https://www.google.com/maps/dir/?api=1&destination=\(coordinate.latitude),\(coordinate.longitude)&travelmode=driving"
-            if let webURL = URL(string: webURLString) {
-                UIApplication.shared.open(webURL)
-            }
-        }
-    }
-    
-    private func searchLocations(query: String) {
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else {
-            searchNearbyLocations()
-            return
-        }
-        
-        // Request location if we don't have it yet
-        if locationManager.userLocation == nil {
-            locationManager.requestLocation()
-        }
-        
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = trimmedQuery
-        request.resultTypes = [.pointOfInterest, .address]
-        
-        // Use user's location if available, otherwise use a default region
-        if let userLocation = locationManager.userLocation {
-            request.region = MKCoordinateRegion(
-                center: userLocation,
-                latitudinalMeters: 50_000,  // 50km radius
-                longitudinalMeters: 50_000
-            )
-        } else {
-            // Fallback to a broader search if location isn't available
-            request.region = MKCoordinateRegion(
-                center: CLLocationCoordinate2D(latitude: 37.7749, longitude: -122.4194),
-                latitudinalMeters: 500_000,
-                longitudinalMeters: 500_000
-            )
-        }
-        
-        let search = MKLocalSearch(request: request)
-        search.start { response, error in
-            var results = response?.mapItems ?? []
-            if results.count > 15 {
-                results = Array(results.prefix(15))
-            }
-            
-            self.processFinalResults(results, query: trimmedQuery)
-        }
-    }
-    
-    
-    private func processFinalResults(_ results: [MKMapItem], query: String) {
-        let queryLower = query.lowercased().trimmingCharacters(in: .whitespaces)
-        
-        var scored = results.map { item -> (item: MKMapItem, score: Double) in
-            let name = (item.name ?? "").lowercased()
-            let address = (self.formatAddress(for: item) ?? "").lowercased()
-            let full = name + " " + address
-            
-            var score: Double = 0.0
-            
-            if name.hasPrefix(queryLower) || full.hasPrefix(queryLower) {
-                score += 100
-            } else if name.contains(queryLower) || full.contains(queryLower) {
-                score += 60
-            } else {
-                // Word-by-word matching - helps with partial typing like "Schroe"
-                let queryWords = queryLower.split(separator: " ")
-                let nameWords = name.split(separator: " ")
-                
-                for qWord in queryWords {
-                    if nameWords.contains(where: { $0.hasPrefix(qWord) || $0.contains(qWord) }) {
-                        score += 30
-                    }
-                }
-            }
-            
-            // Bonus for short queries to show more options
-            if queryLower.count <= 6 {
-                score += 15
-            }
-            
-            return (item, score)
-        }
-        
-        scored.sort {
-            $0.score > $1.score ||
-            ($0.score == $1.score && ($0.item.name ?? "") < ($1.item.name ?? ""))
-        }
-        
-        self.locationSearchResults = Array(scored.map { $0.item }.prefix(10))
-    }
-    
-    
-    private func searchNearbyLocations() {
-        // Request location if we don't have it yet
-        if locationManager.userLocation == nil {
-            locationManager.requestLocation()
-        }
-        
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "nearby places"
-        request.resultTypes = [.pointOfInterest]
-        
-        // Use user's location if available
-        if let userLocation = locationManager.userLocation {
-            request.region = MKCoordinateRegion(
-                center: userLocation,
-                latitudinalMeters: 10_000,  // 10km radius for nearby places
-                longitudinalMeters: 10_000
-            )
-        }
-        
-        let search = MKLocalSearch(request: request)
-        search.start { response, error in
-            if let response = response {
-                locationSearchResults = Array(response.mapItems.prefix(8)) // Show up to 8 nearby places
-            } else {
-                // Fallback to common location types if nearby search fails
-                searchCommonLocations()
-            }
-        }
-    }
-    
-    private func searchCommonLocations() {
-        // Search for common places like "coffee", "restaurant", etc.
-        let request = MKLocalSearch.Request()
-        request.naturalLanguageQuery = "coffee shop"
-        request.resultTypes = [.pointOfInterest]
-        
-        let search = MKLocalSearch(request: request)
-        search.start { response, error in
-            if let response = response {
-                locationSearchResults = Array(response.mapItems.prefix(8))
-            } else {
-                locationSearchResults = []
-            }
-        }
-    }
-    
-    private func selectLocation(_ mapItem: MKMapItem) {
-        item.subtitle = mapItem.name ?? ""
-        let coordinate = mapItem.placemark.coordinate
-        item.locationLatitude = coordinate.latitude
-        item.locationLongitude = coordinate.longitude
-        locationSearchText = mapItem.name ?? ""
-        locationSearchResults = []
-        locationFieldFocused = false
-        try? modelContext.save()
-    }
-    
-    private func formatAddress(for mapItem: MKMapItem) -> String? {
-        let placemark = mapItem.placemark
-        
-        // Build address from placemark properties
-        let components = [
-            placemark.thoroughfare,
-            placemark.locality,
-            placemark.administrativeArea
-        ].compactMap { $0 }
-        
-        return components.isEmpty ? nil : components.joined(separator: ", ")
-    }
-    
-    // MARK: - Time of Day Picker (inline dropdown)
-    private var timeOfDayPickerContent: some View {
-            VStack(alignment: .leading, spacing: 0) {
-                // Time of day group
-                pickerGroupLabel("Time of day")
-                ForEach([ScheduleMode.anytime, .morning, .afternoon, .evening], id: \.self) { mode in
-                    pickerRow(mode: mode)
-                }
-                Divider().padding(.vertical, 4)
-                // Event group
-                pickerGroupLabel("Event")
-                ForEach([ScheduleMode.atTime, .allDay], id: \.self) { mode in
-                    pickerRow(mode: mode)
-                }
-                Divider().padding(.vertical, 4)
-                // Task group
-                pickerRow(mode: .todo)
-            }
-            .padding(.vertical, 4)
-        }
-    
-    private func pickerGroupLabel(_ text: String) -> some View {
-        Text(text)
-            .font(.caption)
-            .foregroundColor(.secondary)
-            .padding(.leading, 4)
-            .padding(.bottom, 2)
-    }
-    
-    private func pickerRow(mode: ScheduleMode) -> some View {
-        Button {
-            let impact = UIImpactFeedbackGenerator(style: .light)
-            impact.impactOccurred()
-            scheduleMode = mode
-            showTimeOfDayPicker = false
-            updateItemDate()
-        } label: {
-            HStack {
-                if scheduleMode == mode {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.semibold))
-                        .frame(width: 20)
-                } else {
-                    Spacer().frame(width: 20)
-                }
-                Image(systemName: mode.icon)
-                    .frame(width: 20)
-                Text(mode.rawValue)
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
-    }
-    
-    // MARK: - Repeat Picker (inline)
-    private var repeatPickerContent: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(RepeatOption.allCases, id: \.self) { option in
-                Button {
-                    let impact = UIImpactFeedbackGenerator(style: .light)
-                    impact.impactOccurred()
-                    repeatOption = option
-                    item.repeatOption = option.rawValue
-                    showRepeatPicker = false
-                } label: {
-                    HStack {
-                        if repeatOption == option {
-                            Image(systemName: "checkmark")
-                                .font(.caption.weight(.semibold))
-                                .frame(width: 20)
-                        } else {
-                            Spacer().frame(width: 20)
-                        }
-                        Text(option.rawValue)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.vertical, 6)
-                .padding(.horizontal, 4)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-    
-    // MARK: - Badge styling helpers
-    private func timeOfDayBadgeColor() -> Color {
-        switch scheduleMode {
-        case .morning:   return Color(red: 0.75, green: 0.70, blue: 0.45) // warm gold
-        case .afternoon: return Color(.systemGray5)
-        case .evening:   return Color(.systemGray5)
-        case .atTime:    return Color(.systemGray5)
-        case .allDay:    return Color(.systemGray5)
-        case .anytime:   return Color(.systemGray5)
-        case .todo:      return Color(.systemGray5)
-        }
-    }
-    
-    private func timeOfDayBadgeForeground() -> Color {
-        switch scheduleMode {
-        case .morning: return .white
-        default:       return .primary
-        }
-    }
-    
-    private func commitNewEntry() {
-        let trimmed = newEntryText.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        let newEntry = ChecklistEntry(text: trimmed)
-        item.checklist.append(newEntry)
-        newEntryText = ""
     }
 }
 
@@ -1827,4 +391,3 @@ struct ItemDetailView: View {
     ContentView()
         .modelContainer(for: [ChecklistItem.self, ChecklistEntry.self])
 }
-

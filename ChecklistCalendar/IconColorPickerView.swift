@@ -20,23 +20,15 @@ struct IconColorPickerView: View {
     @Environment(\.dismiss) private var dismiss
     @Binding var selectedIcon: String
     @Binding var selectedColor: Color
-    
+
     @State private var searchText: String = ""
     @State private var recentlyUsedIcons: [String] = UserDefaults.standard.stringArray(forKey: "recentlyUsedIcons") ?? []
-    
-    private let colors: [Color] = [
-        Color(hex: "f13539") ?? .red,              // vibrant red (new default)
-        Color(red: 0.85, green: 0.55, blue: 0.52),  // coral
-        Color(red: 0.95, green: 0.63, blue: 0.42),  // peach
-        Color(red: 0.96, green: 0.73, blue: 0.25),  // orange/yellow
-        Color(red: 0.64, green: 0.73, blue: 0.47),  // sage green
-        Color(red: 0.53, green: 0.62, blue: 0.71),  // steel blue
-        Color(red: 0.43, green: 0.60, blue: 0.55),  // teal
-        Color(red: 0.63, green: 0.47, blue: 0.52),  // mauve
-        Color(red: 0.43, green: 0.48, blue: 0.57),  // slate
-        Color(red: 0.27, green: 0.27, blue: 0.27),  // charcoal
-    ]
-    
+
+    /// Offer exactly the ColorPair backgrounds — the previous standalone
+    /// palette never matched `ColorPair.forColor(_:)`, so every pick fell
+    /// back to the default red pair in the rest of the UI.
+    private let colors: [Color] = ColorPair.colorPairs.map(\.background)
+
     // Icon categories with SF Symbols
     private let iconCategories: [IconCategory] = [
         IconCategory(
@@ -115,23 +107,23 @@ struct IconColorPickerView: View {
             icons: ["star", "star.fill", "heart", "heart.fill", "flag", "flag.fill", "bell", "bell.fill", "bolt", "bolt.fill", "exclamationmark.triangle", "questionmark.circle", "info.circle"]
         )
     ]
-    
+
     // Computed properties for filtering
     private var filteredCategories: [IconCategory] {
         if searchText.isEmpty {
             return iconCategories
         }
-        
+
         return iconCategories.compactMap { category in
             let filteredIcons = category.icons.filter { icon in
                 icon.localizedCaseInsensitiveContains(searchText) ||
                 category.name.localizedCaseInsensitiveContains(searchText)
             }
-            
+
             if filteredIcons.isEmpty {
                 return nil
             }
-            
+
             return IconCategory(
                 name: category.name,
                 systemImage: category.systemImage,
@@ -139,15 +131,11 @@ struct IconColorPickerView: View {
             )
         }
     }
-    
-    private var shouldShowSuggestions: Bool {
-        searchText.isEmpty
-    }
-    
+
     private var shouldShowRecentlyUsed: Bool {
         searchText.isEmpty && !recentlyUsedIcons.isEmpty
     }
-    
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -164,10 +152,10 @@ struct IconColorPickerView: View {
                                     Circle()
                                         .fill(color)
                                         .frame(width: 48, height: 48)
-                                    
+
                                     if colorsAreEqual(selectedColor, color) {
                                         Circle()
-                                            .strokeBorder(.black, lineWidth: 3)
+                                            .strokeBorder(.primary, lineWidth: 3)
                                             .frame(width: 48, height: 48)
                                     }
                                 }
@@ -179,13 +167,13 @@ struct IconColorPickerView: View {
                     .padding(.vertical, 16)
                 }
                 .background(Color(.systemGray6))
-                
+
                 Divider()
-                
+
                 // MARK: Icon Grid with Categories
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 20) {
-                        
+
                         // Recently Used Section
                         if shouldShowRecentlyUsed {
                             VStack(alignment: .leading, spacing: 12) {
@@ -199,7 +187,7 @@ struct IconColorPickerView: View {
                                 }
                                 .padding(.horizontal, 20)
                                 .padding(.top, 8)
-                                
+
                                 IconGrid(
                                     icons: recentlyUsedIcons,
                                     selectedIcon: $selectedIcon,
@@ -209,7 +197,7 @@ struct IconColorPickerView: View {
                                 )
                             }
                         }
-                        
+
                         // Icon Categories
                         ForEach(filteredCategories) { category in
                             VStack(alignment: .leading, spacing: 12) {
@@ -222,7 +210,7 @@ struct IconColorPickerView: View {
                                         .foregroundColor(.secondary)
                                 }
                                 .padding(.horizontal, 20)
-                                
+
                                 IconGrid(
                                     icons: category.icons,
                                     selectedIcon: $selectedIcon,
@@ -236,15 +224,15 @@ struct IconColorPickerView: View {
                     .padding(.vertical, 16)
                 }
                 .background(Color(.systemBackground))
-                
+
                 // MARK: Search Bar
                 HStack(spacing: 12) {
                     Image(systemName: "magnifyingglass")
                         .foregroundColor(.secondary)
-                    
+
                     TextField("Search", text: $searchText)
                         .textFieldStyle(.plain)
-                    
+
                     if !searchText.isEmpty {
                         Button {
                             searchText = ""
@@ -275,12 +263,12 @@ struct IconColorPickerView: View {
                             .foregroundColor(.primary)
                     }
                 }
-                
+
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button("Reset to Default") {
                             selectedIcon = "checkmark"
-                            selectedColor = ColorPair.colorPairs[0].background  // Default to vibrant red background
+                            selectedColor = ColorPair.colorPairs[0].background
                         }
                         Button("Clear Recently Used") {
                             recentlyUsedIcons.removeAll()
@@ -295,40 +283,40 @@ struct IconColorPickerView: View {
             }
         }
     }
-    
+
     // MARK: - Helper Functions
     private func selectIcon(_ icon: String) {
         let impact = UIImpactFeedbackGenerator(style: .medium)
         impact.impactOccurred()
-        
+
         selectedIcon = icon
-        
+
         // Update recently used
         if let index = recentlyUsedIcons.firstIndex(of: icon) {
             recentlyUsedIcons.remove(at: index)
         }
         recentlyUsedIcons.insert(icon, at: 0)
-        
+
         // Keep only last 10
         if recentlyUsedIcons.count > 10 {
             recentlyUsedIcons = Array(recentlyUsedIcons.prefix(10))
         }
-        
+
         UserDefaults.standard.set(recentlyUsedIcons, forKey: "recentlyUsedIcons")
-        
+
         dismiss()
     }
-    
+
     private func colorsAreEqual(_ color1: Color, _ color2: Color) -> Bool {
         let uiColor1 = UIColor(color1)
         let uiColor2 = UIColor(color2)
-        
+
         var r1: CGFloat = 0, g1: CGFloat = 0, b1: CGFloat = 0, a1: CGFloat = 0
         var r2: CGFloat = 0, g2: CGFloat = 0, b2: CGFloat = 0, a2: CGFloat = 0
-        
+
         uiColor1.getRed(&r1, green: &g1, blue: &b1, alpha: &a1)
         uiColor2.getRed(&r2, green: &g2, blue: &b2, alpha: &a2)
-        
+
         return abs(r1 - r2) < 0.01 && abs(g1 - g2) < 0.01 && abs(b1 - b2) < 0.01
     }
 }
@@ -338,11 +326,11 @@ struct IconGrid: View {
     let icons: [String]
     @Binding var selectedIcon: String
     let onSelect: (String) -> Void
-    
+
     private let columns = [
         GridItem(.adaptive(minimum: 64, maximum: 80), spacing: 16)
     ]
-    
+
     var body: some View {
         LazyVGrid(columns: columns, spacing: 16) {
             ForEach(icons, id: \.self) { icon in
@@ -353,7 +341,7 @@ struct IconGrid: View {
                         Circle()
                             .fill(selectedIcon == icon ? Color.primary : Color(.systemGray5))
                             .frame(width: 64, height: 64)
-                        
+
                         Image(systemName: icon)
                             .font(.title2)
                             .foregroundColor(selectedIcon == icon ? Color(.systemBackground) : .primary)
@@ -370,6 +358,6 @@ struct IconGrid: View {
 #Preview {
     IconColorPickerView(
         selectedIcon: .constant("sunrise"),
-        selectedColor: .constant(Color(hex: "E63946") ?? .red)  // Default vibrant red background
+        selectedColor: .constant(ColorPair.colorPairs[0].background)
     )
 }
